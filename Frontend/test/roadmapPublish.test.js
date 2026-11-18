@@ -108,7 +108,7 @@ test('A. a roadmap whose topics were created by the adapter can be validated and
 test('A. the validator still rejects missing and duplicate topic identifiers', () => {
   const roadmap = { title: 'T', description: 'D', difficulty: 'beginner', objectives: [] };
   const node = _id => ({ _id, title: 'Topic', description: '', dependencies: [], position: 0, resources: [], problems: [] });
-  const identifierError = /unique, valid server identifiers/;
+  const identifierError = /missing or duplicated/;
 
   assert.throws(() => validateRoadmapForPublish(roadmap, [node('node_a'), node('node_a')]), identifierError);
   assert.throws(() => validateRoadmapForPublish(roadmap, [node('')]), identifierError);

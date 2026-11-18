@@ -37,7 +37,7 @@ export function validateRoadmapForPublish(roadmap, nodes) {
   if (!nodes.length) throw new Error('Add at least one learning topic before publishing.');
   const nodeIds = nodes.map(node => String(node._id));
   if (nodes.some(node => typeof node._id !== 'string' || !node._id.trim()) || new Set(nodeIds).size !== nodeIds.length) {
-    throw new Error('Learning topics must have unique, valid server identifiers.');
+    throw new Error('Some learning topics are missing or duplicated. Reload the page and try again.');
   }
   const knownIds = new Set(nodeIds);
   const childrenById = new Map(nodes.map(node => [String(node._id), []]));
