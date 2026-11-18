@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ArrowRight, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, FileText, LockKeyhole, Maximize2, PlayCircle, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { api } from "../../../shared/services/api.js";
 import { weekdays, sessionDateKey, formatCalendarMonth, formatCalendarDay, problemProgressKey, clampGraphView } from '../utils/roadmapUtils.js';
@@ -15,8 +15,10 @@ export function LearningPath({
   nodes = [],
   token,
   user,
-  roadmapSlug
+  roadmapSlug,
+  preview = false
 }) {
+  const location = useLocation();
   const viewportRef = useRef(null);
   const dialogCloseRef = useRef(null);
   const nodeButtonRefs = useRef(new Map());
@@ -36,7 +38,7 @@ export function LearningPath({
     zoom: 1
   });
   const [solvedKeys, setSolvedKeys] = useState(() => new Set());
-  const [progressStatus, setProgressStatus] = useState(user?.role === 'user' && token ? 'loading' : 'unavailable');
+  const [progressStatus, setProgressStatus] = useState(preview ? 'preview' : user?.role === 'user' && token ? 'loading' : 'unavailable');
   const [progressError, setProgressError] = useState('');
   const [pendingKeys, setPendingKeys] = useState(() => new Set());
   const [progressRetry, setProgressRetry] = useState(0);
@@ -158,7 +160,7 @@ export function LearningPath({
       const progress = problemCounts.byTopic.get(id) || { total: 0, solved: 0 };
       const completed = progressStatus === 'ready' && progress.total > 0 && progress.solved === progress.total;
       const dependencyIds = (node.dependencies || []).map(String);
-      const unmetDependencies = dependencyIds.filter(dependencyId => {
+      const unmetDependencies = preview ? [] : dependencyIds.filter(dependencyId => {
         const dependency = graph.nodeById.get(dependencyId);
         if (!dependency || progressStatus !== 'ready') return true;
         const dependencyProgress = problemCounts.byTopic.get(dependencyId) || { total: 0, solved: 0 };
@@ -171,7 +173,7 @@ export function LearningPath({
       });
     }
     return states;
-  }, [graph.nodeById, nodes, problemCounts.byTopic, progressStatus]);
+  }, [graph.nodeById, nodes, preview, problemCounts.byTopic, progressStatus]);
   const fitView = useCallback(() => {
     if (!viewport.width || !viewport.height || !graph.width || !graph.height) return;
     const padding = 24;
@@ -218,8 +220,8 @@ export function LearningPath({
     let active = true;
     setSolvedKeys(new Set());
     setProgressError('');
-    if (!token || user?.role !== 'user') {
-      setProgressStatus('unavailable');
+    if (preview || !token || user?.role !== 'user') {
+      setProgressStatus(preview ? 'preview' : 'unavailable');
       return () => {
         active = false;
       };
@@ -246,7 +248,7 @@ export function LearningPath({
     return () => {
       active = false;
     };
-  }, [roadmapSlug, token, user?.role, progressRetry]);
+  }, [preview, roadmapSlug, token, user?.role, progressRetry]);
   useEffect(() => {
     let active = true;
     setRoadmapSessions([]);
@@ -651,11 +653,11 @@ export function LearningPath({
                 </div>)}
             </div>
           </div>
-          {progressStatus === 'unavailable' && <p className="learning-sidebar-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login">Sign in</Link> to save your progress.</>}</p>}
+          {progressStatus === 'unavailable' && <p className="learning-sidebar-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to save your progress.</>}</p>}
           {progressStatus === 'error' && <p className="learning-progress-error" role="alert">{progressError} <button type="button" onClick={() => setProgressRetry(current => current + 1)}>Retry</button></p>}
         </section>
 
-        <section className="learning-calendar-card" aria-labelledby="learning-calendar-title">
+        {!preview && <section className="learning-calendar-card" aria-labelledby="learning-calendar-title">
           <header className="learning-sidebar-card-heading">
             <h3 id="learning-calendar-title">Roadmap calendar</h3>
             <button type="button" className="learning-calendar-collapse-button" aria-label={calendarCollapsed ? 'Expand roadmap calendar' : 'Collapse roadmap calendar'} onClick={() => setCalendarCollapsed(current => !current)}>
@@ -665,7 +667,7 @@ export function LearningPath({
           {!calendarCollapsed && <>
             <p className="learning-calendar-description">Scheduled sessions from cycles you joined.</p>
             {scheduleStatus === 'loading' && <p className="learning-sidebar-message">Loading your enrolled sessions…</p>}
-            {scheduleStatus === 'unavailable' && <p className="learning-sidebar-message"><Link to="/login">Sign in</Link> to see your cycle schedule.</p>}
+            {scheduleStatus === 'unavailable' && <p className="learning-sidebar-message"><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to see your cycle schedule.</p>}
             {scheduleStatus === 'error' && <p className="learning-progress-error" role="alert">{scheduleError} <button type="button" onClick={() => setScheduleRetry(current => current + 1)}>Retry</button></p>}
             {scheduleStatus === 'ready' && <>
               <div className="learning-calendar-toolbar">
@@ -706,7 +708,7 @@ export function LearningPath({
               {!roadmapSessions.length && <Link className="learning-calendar-cycles-link" to="/training">Explore Training <ArrowRight size={14} /></Link>}
             </>}
           </>}
-        </section>
+        </section>}
       </aside>
 
       {selectedNode && <div className="learning-node-dialog-backdrop" onMouseDown={event => {
@@ -759,7 +761,7 @@ export function LearningPath({
             </div> : <p className="learning-topic-empty">No prerequisites for this topic.</p>}
           </section>
 
-          {progressStatus === 'unavailable' && <p className="learning-node-progress-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login">Sign in</Link> to save your problem progress.</>}</p>}
+          {progressStatus === 'unavailable' && <p className="learning-node-progress-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to save your problem progress.</>}</p>}
           {(progressStatus === 'error' || progressError) && <p className="learning-progress-error" role="alert">{progressError} {progressStatus === 'error' && <button type="button" onClick={() => setProgressRetry(current => current + 1)}>Retry</button>}</p>}
 
           <section className={`learning-node-problems${selectedUnmetDependencies.length ? ' is-locked' : ''}`} aria-labelledby="learning-node-problems-title">

@@ -5,6 +5,7 @@ import { api, eventDate } from "../../../shared/services/api.js";
 import { LearningPath } from '../components/LearningPath.jsx';
 import { LoadingState } from '../components/LoadingState.jsx';
 import { weekdays, formatSessionTime, formatDateTimeInput, dateTimeInputToIso, formatProblems, parseProblems, emptyCycleForm, toCyclePayload, formatResources, parseResources } from '../utils/roadmapUtils.js';
+import { validateImportText, validateImportUrl, validateRoadmapForPublish } from '../utils/roadmapPublishValidation.js';
 import './AdminRoadmapsPage.css';
 
 const ROADMAP_EXPORT_SCHEMA_VERSION = 1;
@@ -133,28 +134,6 @@ function assertPlainObject(value, label) {
 function rejectUnknownFields(value, allowedFields, label) {
   const unexpected = Object.keys(value).find(field => !allowedFields.includes(field));
   if (unexpected) throw new Error(`${label} contains an unsupported field: "${unexpected}".`);
-}
-
-function validateImportText(value, label, maxLength, { required = false } = {}) {
-  if (typeof value !== 'string') throw new Error(`${label} must be text.`);
-  const normalized = value.trim();
-  if (required && !normalized) throw new Error(`${label} is required.`);
-  if (normalized.length > maxLength) throw new Error(`${label} must be ${maxLength} characters or fewer.`);
-  return normalized;
-}
-
-function validateImportUrl(value, label) {
-  const normalized = validateImportText(value, label, 500, { required: true });
-  let url;
-  try {
-    url = new URL(normalized);
-  } catch {
-    throw new Error(`${label} must be a valid HTTP or HTTPS URL.`);
-  }
-  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
-    throw new Error(`${label} must be a valid HTTP or HTTPS URL.`);
-  }
-  return url.toString();
 }
 
 function validateRoadmapImport(input) {
@@ -405,68 +384,6 @@ function RoadmapImportTree({ nodes }) {
       </details>)}
     </div>
   </section>;
-}
-
-function validateRoadmapForPublish(roadmap, nodes) {
-  if (!roadmap.title?.trim() || !roadmap.description?.trim()) {
-    throw new Error('Add a roadmap title and description before publishing.');
-  }
-  if (!['beginner', 'intermediate', 'advanced'].includes(roadmap.difficulty)) {
-    throw new Error('Choose a supported roadmap difficulty before publishing.');
-  }
-  if (roadmap.coverImageUrl) validateImportUrl(roadmap.coverImageUrl, 'Cover image URL');
-  if (!Array.isArray(roadmap.objectives) || roadmap.objectives.length > 30) {
-    throw new Error('Roadmap objectives must contain up to 30 items.');
-  }
-  roadmap.objectives.forEach((objective, index) => validateImportText(objective, `Objective ${index + 1}`, 160));
-  if (!nodes.length) throw new Error('Add at least one learning topic before publishing.');
-  const nodeIds = nodes.map(node => String(node._id));
-  if (nodeIds.some(id => !/^[a-f\d]{24}$/i.test(id)) || new Set(nodeIds).size !== nodeIds.length) {
-    throw new Error('Learning topics must have unique, valid server identifiers.');
-  }
-  const knownIds = new Set(nodeIds);
-  const childrenById = new Map(nodes.map(node => [String(node._id), []]));
-  const pending = new Map();
-  for (const node of nodes) {
-    const dependencies = (node.dependencies || []).map(String);
-    if (dependencies.length > 100 || new Set(dependencies).size !== dependencies.length || dependencies.some(id => !knownIds.has(id) || id === String(node._id))) {
-      throw new Error(`Fix missing or self-referencing prerequisites on "${node.title}".`);
-    }
-    for (const dependency of dependencies) childrenById.get(dependency).push(String(node._id));
-    pending.set(String(node._id), dependencies.length);
-    if (!node.title?.trim()) throw new Error('Every learning topic needs a title.');
-    validateImportText(node.title, `Topic "${node.title}" title`, 140, { required: true });
-    validateImportText(node.description || '', `Topic "${node.title}" description`, 3000);
-    if (!Number.isInteger(node.position) || node.position < 0) throw new Error(`Topic "${node.title}" has an invalid order.`);
-    if (node.estimatedHours !== null && node.estimatedHours !== undefined && (!Number.isFinite(Number(node.estimatedHours)) || Number(node.estimatedHours) < 0)) {
-      throw new Error(`Topic "${node.title}" has invalid estimated hours.`);
-    }
-    if (!Array.isArray(node.resources) || node.resources.length > 30 || !Array.isArray(node.problems) || node.problems.length > 100) {
-      throw new Error(`Topic "${node.title}" has too many or invalid learning links.`);
-    }
-    node.resources.forEach((resource, index) => {
-      validateImportText(resource.title, `Topic "${node.title}" resource ${index + 1} title`, 140, { required: true });
-      validateImportUrl(resource.url, `Topic "${node.title}" resource ${index + 1} URL`);
-    });
-    node.problems.forEach((problem, index) => {
-      validateImportText(problem.title, `Topic "${node.title}" problem ${index + 1} title`, 140, { required: true });
-      validateImportUrl(problem.url, `Topic "${node.title}" problem ${index + 1} URL`);
-      if (!['easy', 'medium', 'hard'].includes(problem.difficulty || 'medium')) {
-        throw new Error(`Topic "${node.title}" problem ${index + 1} has an unsupported difficulty.`);
-      }
-    });
-  }
-  const ready = [...pending].filter(([, count]) => count === 0).map(([id]) => id);
-  let visited = 0;
-  while (ready.length) {
-    const id = ready.pop();
-    visited += 1;
-    for (const childId of childrenById.get(id)) {
-      pending.set(childId, pending.get(childId) - 1);
-      if (pending.get(childId) === 0) ready.push(childId);
-    }
-  }
-  if (visited !== nodes.length) throw new Error('Fix the circular prerequisite relationships before publishing.');
 }
 
 function AdminSession({
@@ -729,6 +646,7 @@ export function AdminRoadmapsPage({
   const routeSection = routeParts[0] === 'new' ? 'create-roadmap' : !routeRoadmapId ? 'list' : routeParts[1] === 'settings' ? 'settings' : routeParts[1] === 'nodes' ? 'nodes' : routeParts[1] === 'cycles' ? routeParts[2] === 'new' || routeParts[3] === 'edit' ? 'cycle-form' : routeParts[3] === 'sessions' ? 'sessions' : 'cycles' : 'overview';
   const routeCycleId = routeParts[1] === 'cycles' && routeParts[2] !== 'new' ? routeParts[2] || '' : '';
   const importInputRef = useRef(null);
+  const nodeFormRef = useRef(null);
   const [roadmaps, setRoadmaps] = useState([]);
   const [importCandidate, setImportCandidate] = useState(null);
   const [importError, setImportError] = useState('');
@@ -935,7 +853,7 @@ export function AdminRoadmapsPage({
         })
       });
       const refreshed = await loadRoadmaps();
-      setMessage(refreshed ? 'Roadmap changes saved to the server.' : 'Roadmap changes were saved, but the roadmap list could not be refreshed.');
+      setMessage(refreshed ? 'Roadmap changes saved.' : 'Roadmap changes were saved, but the roadmap list could not be refreshed.');
     } catch (reason) {
       setMessage('');
       setError(reason.message);
@@ -1046,7 +964,7 @@ export function AdminRoadmapsPage({
         body: JSON.stringify({ ...importCandidate.roadmap, status: 'draft' })
       });
       createdRoadmap = created.roadmap;
-      if (!createdRoadmap?._id) throw new Error('The server did not return the new draft roadmap.');
+      if (!createdRoadmap?._id) throw new Error('The new draft roadmap could not be created. Try again.');
 
       const importedIds = new Map();
       for (const node of importCandidate.orderedNodes) {
@@ -1069,7 +987,7 @@ export function AdminRoadmapsPage({
             isRequired: node.isRequired
           })
         });
-        if (!response.node?._id) throw new Error(`The server did not return a saved identifier for "${node.title}".`);
+        if (!response.node?._id) throw new Error(`The topic "${node.title}" could not be saved.`);
         importedIds.set(node.id, String(response.node._id));
         importedCount += 1;
       }
@@ -1113,6 +1031,14 @@ export function AdminRoadmapsPage({
       resources: formatResources(node.resources || []),
       problems: formatProblems(node.problems || [])
     });
+    setError('');
+    setMessage('');
+    const form = nodeFormRef.current;
+    if (form) {
+      const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      form.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      form.querySelector('input, textarea, select')?.focus({ preventScroll: true });
+    }
   };
   const resetNodeForm = () => {
     setEditingNodeId('');
@@ -1370,6 +1296,7 @@ export function AdminRoadmapsPage({
       missingIds
     };
   }, [editingNodeId, nodeForm.dependencies, nodes]);
+  const feedbackInForm = Boolean(selected && selected.status !== 'archived' && (routeSection === 'nodes' || routeSection === 'settings' && selectedRoadmapForm));
   const pageTitle = routeSection === 'list' ? 'Roadmaps' : routeSection === 'create-roadmap' ? 'Create roadmap' : routeSection === 'cycle-form' ? `${editingCycleId ? 'Edit' : 'Create'} cycle` : routeSection === 'sessions' ? 'Session management' : selected?.title || 'Roadmap';
   return <main className="page-wrap roadmaps-admin-page">
     <input ref={importInputRef} className="roadmap-import-input" type="file" accept=".json,application/json" onChange={selectImportFile} />
@@ -1529,10 +1456,10 @@ export function AdminRoadmapsPage({
         <Link aria-current={routeSection === 'settings' ? 'page' : undefined} className={routeSection === 'settings' ? 'active' : ''} to={`/admin/roadmaps/${selected._id}/settings`}>Settings</Link>
       </nav>
       {selected.status === 'draft' && routeSection === 'overview' && <aside className="roadmap-admin-capabilities">
-        <p><strong>Publishing:</strong> this screen validates saved fields, links, and prerequisite cycles before changing status. The existing server endpoint only persists the status and does not provide API-level publish validation.</p>
+        <p><strong>Publishing:</strong> saved fields, links, and prerequisite cycles are validated before the status changes.</p>
       </aside>}
-      {error && routeSection !== 'sessions' && <div className="notice error-notice" role="alert">{error}</div>}
-      {message && routeSection !== 'sessions' && <div className="notice success-notice" role="status">{message}</div>}
+      {error && routeSection !== 'sessions' && !feedbackInForm && <div className="notice error-notice" role="alert">{error}</div>}
+      {message && routeSection !== 'sessions' && !feedbackInForm && <div className="notice success-notice" role="status">{message}</div>}
 
       {routeSection === 'overview' && <section className="roadmap-admin-panel roadmap-studio-overview">
         <div className="roadmap-studio-overview-heading"><div><span className={`roadmap-studio-status status-${selected.status}`}>{selected.status}</span><h2>{selected.title}</h2><p>{selected.description}</p></div><Link className="button button-dark" to="/admin/cycles">Manage cycles <ArrowRight size={15} /></Link></div>
@@ -1580,6 +1507,8 @@ export function AdminRoadmapsPage({
               ...selectedRoadmapForm,
               prerequisites: event.target.value
             })} /></label>
+          {error && <div className="notice error-notice" role="alert">{error}</div>}
+          {message && <div className="notice success-notice" role="status">{message}</div>}
           <div className="roadmap-admin-actions"><button className="button button-dark" disabled={busy}><Save size={15} /> {busy ? 'Saving…' : selected.status === 'draft' ? 'Save draft changes' : 'Save changes'}</button></div>
         </form>
       </section>}
@@ -1588,11 +1517,11 @@ export function AdminRoadmapsPage({
       {routeSection === 'nodes' && <section className="roadmap-admin-panel learning-path-admin">
         <div className="roadmap-studio-section-heading"><div><h2>Learning path topics</h2><p>Create topics, link prerequisites, and add learning resources or practice problems.</p></div></div>
         <aside className="roadmap-admin-capabilities" aria-label="Roadmap editor capabilities">
-          <p><strong>Persisted editing:</strong> set prerequisites and topic order in the editor below; each save uses the secured node API.</p>
-          <p><strong>Not supported by the current backend:</strong> drag-to-move canvas nodes, connector handles, categories/subtopics, and roadmap analytics. The canvas here is a read-only student preview; no local-only controls are shown.</p>
+          <p><strong>Editing:</strong> set prerequisites and topic order in the form below. Each save takes effect right away.</p>
+          <p><strong>Not available yet:</strong> dragging topics on the canvas, drawing connections, categories/subtopics, and roadmap analytics. The path preview shows what students see and cannot be edited directly.</p>
         </aside>
         {selected.status === 'archived' ? <div className="notice">Archived roadmaps are read-only.</div> : <>
-          <form className="roadmap-admin-form" onSubmit={saveNode}>
+          <form className="roadmap-admin-form" ref={nodeFormRef} onSubmit={saveNode}>
             <h3>{editingNodeId ? 'Edit topic' : 'Add topic'}</h3>
             <label>Topic title<input required maxLength="140" value={nodeForm.title} onChange={event => setNodeForm({
                 ...nodeForm,
@@ -1651,11 +1580,13 @@ export function AdminRoadmapsPage({
                 ...nodeForm,
                 problems: event.target.value
               })} /></label>
+            {error && <div className="notice error-notice" role="alert">{error}</div>}
+            {message && <div className="notice success-notice" role="status">{message}</div>}
             <div className="roadmap-admin-actions"><button className="button button-dark" disabled={nodeSaving}><Save size={15} /> {nodeSaving ? 'Saving topic...' : editingNodeId ? 'Save topic' : 'Add topic'}</button>{editingNodeId && <button className="button button-outline" type="button" disabled={nodeSaving} onClick={resetNodeForm}>Cancel edit</button>}</div>
           </form>
           <div className="learning-path-admin-preview">
             <h3>Path preview</h3>
-            {nodes.length > 0 && <LearningPath nodes={nodes} />}
+            {nodes.length > 0 && <LearningPath nodes={nodes} preview />}
             {nodesLoading ? <LoadingState>Loading topics...</LoadingState> : nodes.length ? nodes.map(node => <article className="learning-path-admin-node" key={node._id}>
               <div><span className="category-label">{node.isRequired ? 'Required' : 'Optional'} · Order {node.position}</span><h4>{node.title}</h4>
                 {(node.dependencies || []).length > 0 && <p>Prerequisites: {node.dependencies.map(id => nodes.find(item => item._id === String(id))?.title).filter(Boolean).join(', ') || 'None'}</p>}

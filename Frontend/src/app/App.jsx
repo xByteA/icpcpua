@@ -60,7 +60,7 @@ export default function App() {
       <Header user={session.user} onSignOut={session.signOut} token={session.token} theme={theme} onThemeChange={setTheme} />
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/events" element={<EventsPage />} />
+        <Route path="/events" element={<EventsPage token={session.token} user={session.user} />} />
         <Route path="/dashboard" element={<RequireUsername session={session}>{session.user?.role === 'user' ? <StudentDashboardPage session={session} /> : <Navigate to="/admin/overview" replace />}</RequireUsername>} />
         <Route path="/events/:eventId" element={<EventDetail token={session.token} user={session.user} />} />
         <Route path="/roadmaps" element={<RoadmapsPage token={session.token} />} />
@@ -86,8 +86,8 @@ export default function App() {
         <Route path="/admin/events" element={<RequireUsername session={session}>{session.user?.role === 'admin' ? <AdminDashboardLayout activeSection="events"><Admin token={session.token} /></AdminDashboardLayout> : <Navigate to="/login" replace />}</RequireUsername>} />
         <Route path="/admin/cycles" element={<RequireUsername session={session}>{session.user?.role === 'admin' ? <AdminDashboardLayout activeSection="cycles"><AdminCyclesPage token={session.token} /></AdminDashboardLayout> : <Navigate to="/login" replace />}</RequireUsername>} />
         <Route path="/admin/roadmaps/*" element={<RequireUsername session={session}>{session.user?.role === 'admin' ? <AdminDashboardLayout activeSection="roadmaps"><AdminRoadmapsPage token={session.token} /></AdminDashboardLayout> : <Navigate to="/login" replace />}</RequireUsername>} />
-        <Route path="*" element={<main className="page-wrap"><div className="empty-state"><h3>That page wandered off.</h3><Link className="button button-dark" to="/">Back to events</Link></div></main>} />
+        <Route path="*" element={<main className="page-wrap"><div className="empty-state"><h3>That page wandered off.</h3><Link className="button button-dark" to="/events">Back to events</Link></div></main>} />
       </Routes>
-      <Footer />
+      <Footer user={session.user} />
     </div>;
 }

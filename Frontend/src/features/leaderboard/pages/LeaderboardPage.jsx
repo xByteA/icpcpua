@@ -6,11 +6,18 @@ export function LeaderboardPage() {
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError('');
     api('/events/leaderboard').then(({
       leaderboard: results
-    }) => setLeaderboard(results)).catch(reason => setError(reason.message)).finally(() => setLoading(false));
-  }, []);
+    }) => active && setLeaderboard(results)).catch(reason => active && setError(reason.message)).finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [attempt]);
   return <main className="page-wrap leaderboard-page">
     <header className="leaderboard-title-card">
       <span className="leaderboard-title-icon"><Trophy size={22} aria-hidden="true" /></span>
@@ -18,7 +25,6 @@ export function LeaderboardPage() {
         <h1>Leaderboard</h1>
       </div>
     </header>
-    {error && <div className="notice error-notice">{error}</div>}
     {loading ? <div className="empty-state"><span className="loader" /> Loading the leaderboard...</div> : leaderboard.length ? <>
       <section className={`leaderboard-podium leaderboard-podium-count-${Math.min(leaderboard.length, 3)}`} aria-labelledby="leaderboard-podium-title">
         <div className="podium-heading">
@@ -64,6 +70,6 @@ export function LeaderboardPage() {
           </div>;
         })}
       </section>
-    </> : <div className="empty-state"><span className="empty-icon"><Trophy size={24} /></span><h3>The first points are up for grabs.</h3><p>Check in at an event to get on the leaderboard.</p></div>}
+    </> : error ? <div className="notice error-notice" role="alert">{error} <button className="text-link" type="button" onClick={() => setAttempt(count => count + 1)}>Try again</button></div> : <div className="empty-state"><span className="empty-icon"><Trophy size={24} /></span><h3>The first points are up for grabs.</h3><p>Check in at an event to get on the leaderboard.</p></div>}
   </main>;
 }

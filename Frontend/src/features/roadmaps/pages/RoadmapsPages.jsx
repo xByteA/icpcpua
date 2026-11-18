@@ -12,6 +12,7 @@ function RoadmapCard({
   hasCycles,
   cycleAvailability,
 }) {
+  const location = useLocation();
   const difficulty = ['beginner', 'intermediate', 'advanced'].includes(roadmap.difficulty?.toLowerCase())
     ? roadmap.difficulty.toLowerCase()
     : null;
@@ -33,7 +34,7 @@ function RoadmapCard({
         <span className="roadmap-live-dot" aria-hidden="true" />
         <span>Open Cycle: {openCycle.title}</span>
         <ArrowRight size={5} aria-hidden="true" />
-      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login">Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability unavailable</div>}
+      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability couldn’t be loaded</div>}
       <Link className="button button-dark roadmap-card-link" to={`/roadmaps/${roadmap.slug}`}>Explore roadmap <ArrowRight size={16} aria-hidden="true" /></Link>
     </div>
   </article>;
@@ -240,21 +241,31 @@ export function TrainingPage({
 }) {
   const location = useLocation();
   const [cycles, setCycles] = useState([]);
-  const [activeFilter, setActiveFilter] = useState('upcoming');
+  const [pickedFilter, setPickedFilter] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const result = await api('/roadmaps/cycles', {
         token
       });
+      if (!mountedRef.current) return;
       setCycles(result.cycles);
+      setLoaded(true);
       setError('');
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current) setError(reason.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [token]);
   useEffect(() => {
@@ -269,6 +280,7 @@ export function TrainingPage({
     upcoming: cycles.filter(cycle => getCycleCategory(cycle, today) === 'upcoming'),
     completed: cycles.filter(cycle => getCycleCategory(cycle, today) === 'completed')
   };
+  const activeFilter = pickedFilter || ['active', 'upcoming', 'completed'].find(filter => cycleGroups[filter].length) || 'upcoming';
   const visibleCycles = cycleGroups[activeFilter];
   return <main className="page-wrap roadmaps-page training-page">
     <header className="roadmap-page-hero training-page-hero">
@@ -280,9 +292,9 @@ export function TrainingPage({
       <Link className="roadmap-page-hero-action" to="/roadmaps"><BookOpen size={16} aria-hidden="true" /> Browse Roadmaps <ArrowRight size={16} aria-hidden="true" /></Link>
     </header>
     {error && <div className="notice error-notice" role="alert">{error} <button className="text-link" type="button" onClick={load}>Try again</button></div>}
-    {loading ? <LoadingState>Loading training cycles...</LoadingState> : cycles.length ? <>
+    {loading && !loaded ? <LoadingState>Loading training cycles...</LoadingState> : cycles.length ? <>
       <div className="training-cycle-filters" role="group" aria-label="Filter training cycles">
-        {['active', 'upcoming', 'completed'].map(filter => <button key={filter} type="button" className={activeFilter === filter ? 'training-cycle-filter is-active' : 'training-cycle-filter'} aria-label={`${filter.charAt(0).toUpperCase() + filter.slice(1)} cycles (${cycleGroups[filter].length})`} aria-pressed={activeFilter === filter} onClick={() => setActiveFilter(filter)}>
+        {['active', 'upcoming', 'completed'].map(filter => <button key={filter} type="button" className={activeFilter === filter ? 'training-cycle-filter is-active' : 'training-cycle-filter'} aria-label={`${filter.charAt(0).toUpperCase() + filter.slice(1)} cycles (${cycleGroups[filter].length})`} aria-pressed={activeFilter === filter} onClick={() => setPickedFilter(filter)}>
           <span className="training-cycle-filter-label-full">{filter.charAt(0).toUpperCase() + filter.slice(1)} Cycles</span><span className="training-cycle-filter-label-mobile">{filter.charAt(0).toUpperCase() + filter.slice(1)}</span><span className="training-cycle-filter-count">{cycleGroups[filter].length}</span>
         </button>)}
       </div>
@@ -309,28 +321,53 @@ export function RoadmapCyclePage({
   const [viewMode, setViewMode] = useState('calendar');
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [selectedSession, setSelectedSession] = useState(null);
+  const messageRef = useRef(null);
+  const mountedRef = useRef(true);
+  const requestRef = useRef(0);
   const scheduleRef = useRef(null);
   const sessionDialogRef = useRef(null);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const load = useCallback(async () => {
+    const requestId = ++requestRef.current;
     setLoading(true);
     try {
-      setData(await api(`/roadmaps/${encodeURIComponent(slug)}/cycles/${encodeURIComponent(cycleId)}`, {
+      const result = await api(`/roadmaps/${encodeURIComponent(slug)}/cycles/${encodeURIComponent(cycleId)}`, {
         token
-      }));
+      });
+      if (!mountedRef.current || requestId !== requestRef.current) return;
+      setData(result);
       setError('');
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current && requestId === requestRef.current) setError(reason.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current && requestId === requestRef.current) setLoading(false);
     }
   }, [cycleId, slug, token]);
   useEffect(() => {
+    setData(null);
+    setLoading(true);
     load();
   }, [load]);
+  useEffect(() => {
+    if (!success && !error) return;
+    const node = messageRef.current;
+    if (!node) return;
+    node.scrollIntoView({
+      block: 'nearest'
+    });
+    node.focus({
+      preventScroll: true
+    });
+  }, [success, error]);
   useEffect(() => {
     if (!selectedSession) return undefined;
     const previousFocus = document.activeElement;
@@ -373,12 +410,13 @@ export function RoadmapCyclePage({
         method: 'POST',
         token
       });
-      setSuccess('You are enrolled. Open Training to continue your cycle.');
+      if (!mountedRef.current) return;
+      setSuccess('You are enrolled. Your sessions and materials are ready below.');
       await load();
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current) setError(reason.message);
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
   const leave = async () => {
@@ -390,19 +428,20 @@ export function RoadmapCyclePage({
         method: 'DELETE',
         token
       });
+      if (!mountedRef.current) return;
       setConfirmLeave(false);
       setSuccess(result.message);
       await load();
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current) setError(reason.message);
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
   if (!user || !token) return <Navigate to="/login" replace state={{
     from: `${location.pathname}${location.search}`
   }} />;
-  if (loading) return <main className="page-wrap"><LoadingState /></main>;
+  if (loading && !data) return <main className="page-wrap"><LoadingState /></main>;
   if (error && !data) return <main className="page-wrap"><div className="notice error-notice" role="alert">{error}</div></main>;
   if (!data) return null;
   const {
@@ -468,7 +507,7 @@ export function RoadmapCyclePage({
     return 'is-upcoming';
   };
   return <main className="page-wrap roadmaps-page">
-    <Link className="roadmap-cycle-back-link" to={`/roadmaps/${roadmap.slug}/cycles`}><ChevronLeft size={19} aria-hidden="true" /> {roadmap.title} cycles</Link>
+    <Link className="roadmap-cycle-back-link" to="/training"><ChevronLeft size={19} aria-hidden="true" /> Back to training</Link>
     <div className="roadmap-detail-header roadmap-cycle-detail-header"><span className="roadmap-cycle-detail-kicker">{roadmap.title} <span aria-hidden="true">·</span> Cycle #{cycle.order}</span><h1>{cycle.title}</h1>{showCycleDescription && <p>{cycleDescription}</p>}
       <section className="roadmap-cycle-data-card" aria-label="Cycle details">
         <div><CalendarDays size={18} /><span><small>Cycle dates</small><strong>{formatCycleDateRange(cycle.startDate, cycle.endDate)}</strong></span></div>
@@ -480,8 +519,8 @@ export function RoadmapCyclePage({
       </section>
     </div>
     {cycle.objectives?.length > 0 && <section className="roadmap-content-section"><h2>Cycle objectives</h2><ul className="roadmap-objectives">{cycle.objectives.map(item => <li key={item}>{item}</li>)}</ul></section>}
-    {error && <div className="notice error-notice" role="alert">{error}</div>}
-    {success && <div className="notice success-notice" role="status">{success}</div>}
+    {error && <div className="notice error-notice" role="alert" tabIndex={-1} ref={messageRef}>{error}</div>}
+    {success && <div className="notice success-notice" role="status" tabIndex={-1} ref={messageRef}>{success}</div>}
     {cycle.status === 'published' && (enrolled ? <section className="roadmap-enroll-panel roadmap-cycle-enroll-panel is-enrolled" aria-labelledby="cycle-enrollment-title">
       <div className="roadmap-enrollment-message"><span className="roadmap-enrollment-check"><Check size={19} aria-hidden="true" /></span><div><h2 id="cycle-enrollment-title">You are enrolled in this cycle!</h2><p>Your sessions and materials are ready below.</p>{leaveAvailable && <small>You can leave this cycle until {formatCycleDate(cycle.startDate)}.</small>}</div></div>
       <div className="roadmap-enrollment-actions">
@@ -559,7 +598,7 @@ export function RoadmapCyclePage({
         {enrolled && [...(selectedSession.materials || []), ...(selectedSession.problemSets || [])].length > 0 && <div className="roadmap-session-dialog-resources">
           {[...(selectedSession.materials || []), ...(selectedSession.problemSets || [])].map(resource => <a className="roadmap-resource-link" key={`${resource.title}-${resource.url}`} href={resource.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> {resource.title}</a>)}
         </div>}
-        {!enrolled && cycle.status === 'published' && selectedSession.status !== 'cancelled' && (user ? <button className="button button-dark" type="button" disabled={busy} onClick={enroll}>{busy ? 'Enrolling...' : 'Enroll in cycle'} <ArrowRight size={16} /></button> : <Link className="button button-dark" to="/login">Sign in to enroll <ArrowRight size={16} /></Link>)}
+        {!enrolled && cycle.status === 'published' && selectedSession.status !== 'cancelled' && (user ? <button className="button button-dark" type="button" disabled={busy} onClick={enroll}>{busy ? 'Enrolling...' : 'Enroll in cycle'} <ArrowRight size={16} /></button> : <Link className="button button-dark" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to enroll <ArrowRight size={16} /></Link>)}
       </section>
     </div>}
   </main>;
