@@ -2,11 +2,12 @@ import { getApp, getApps, initializeApp } from 'firebase/app';
 import {
   GithubAuthProvider,
   GoogleAuthProvider,
+  connectAuthEmulator,
   getAuth,
   signInWithPopup,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
 
@@ -27,6 +28,13 @@ export const ADMIN_EMAILS = new Set(
     .filter(Boolean),
 );
 
+// Local development only: VITE_FIREBASE_EMULATORS=true sends Auth and Firestore
+// to the Firebase emulators (`firebase emulators:start`) instead of the real
+// project, so accounts and data created while testing never reach production.
+const USE_EMULATORS = env.VITE_FIREBASE_EMULATORS === 'true';
+const AUTH_EMULATOR_URL = env.VITE_FIREBASE_AUTH_EMULATOR_URL || 'http://127.0.0.1:9099';
+const FIRESTORE_EMULATOR_HOST = env.VITE_FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
+
 let cachedApp = null;
 let cachedAuth = null;
 let cachedDb = null;
@@ -34,8 +42,15 @@ let cachedDb = null;
 export function getFirebaseClients() {
   if (!cachedApp) {
     cachedApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    // In a browser getAuth() keeps the signed-in user across page reloads
+    // (IndexedDB, falling back to localStorage) for every sign-in method.
     cachedAuth = getAuth(cachedApp);
     cachedDb = getFirestore(cachedApp);
+    if (USE_EMULATORS) {
+      const [host, port] = FIRESTORE_EMULATOR_HOST.split(':');
+      connectAuthEmulator(cachedAuth, AUTH_EMULATOR_URL, { disableWarnings: true });
+      connectFirestoreEmulator(cachedDb, host, Number(port) || 8080);
+    }
   }
   return { app: cachedApp, auth: cachedAuth, db: cachedDb };
 }

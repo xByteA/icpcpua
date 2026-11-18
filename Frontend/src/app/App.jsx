@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
-import { api } from "../shared/services/api.js";
+import { api, signOutEverywhere } from "../shared/services/api.js";
 import { Header, Footer } from './layouts/SiteLayout.jsx';
 import { AuthPage, UsernameSetupPage, RequireUsername } from '../features/auth/pages/AuthPages.jsx';
 import { HomePage, EventsPage, EventDetail, CheckInPage } from '../features/events/pages/EventPages.jsx';
@@ -18,9 +18,11 @@ function useSession() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(Boolean(token));
   const signOut = useCallback(() => {
+    const endedToken = localStorage.getItem('pua-token');
     localStorage.removeItem('pua-token');
     setToken(null);
     setUser(null);
+    signOutEverywhere(endedToken);
   }, []);
   useEffect(() => {
     if (!token) {

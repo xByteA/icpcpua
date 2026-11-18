@@ -3,6 +3,7 @@ import seedFixture from '../data/seedFixture.json' with { type: 'json' };
 import { ADMIN_EMAILS, getFirebaseClients } from './firebase.js';
 import { validateRoadmapForPublish } from '../../features/roadmaps/utils/roadmapPublishValidation.js';
 import { CodeforcesError, fetchCodeforcesSolved } from './codeforcesApi.js';
+import { emailAuthError, emailAuthErrorCode, isWrongCredentials } from '../../features/auth/utils/emailAuthErrors.js';
 import {
   CODEFORCES_POINTS_PER_PROBLEM,
   LEADERBOARD_INCLUDES_ATTENDANCE_POINTS,
@@ -24,6 +25,14 @@ import {
   setDoc,
   where,
 } from 'firebase/firestore';
+import {
+  EmailAuthProvider,
+  createUserWithEmailAndPassword,
+  reauthenticateWithCredential,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updatePassword,
+} from 'firebase/auth';
 
 const STORAGE_KEY = 'icpc_pua_spark_db_v1';
 
@@ -165,6 +174,12 @@ export function resetSparkStoreForTests() {
   saveState(memoryState);
 }
 
+// Tests: drop the in-memory copy so the next request reads localStorage again,
+// as a page reload does.
+export function reloadSparkStoreForTests() {
+  memoryState = null;
+}
+
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
 
 // ---------------------------------------------------------------------------
@@ -183,8 +198,7 @@ const USERS_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 // getClients is injectable so the same code can be pointed at the Firebase emulators.
 export function createFirestoreRemote(getClients = getFirebaseClients) {
   return {
-    // Uid of the Firebase Auth user in this browser, or null. Only Google/GitHub
-    // sign-in creates one; email-and-password accounts exist in local state only.
+    // Uid of the Firebase Auth user in this browser, or null.
     async currentUid() {
       const { auth } = getClients();
       if (typeof auth.authStateReady === 'function') await auth.authStateReady();
@@ -232,6 +246,88 @@ function resetRemoteSession() {
 export function setSparkRemoteForTests(fakeRemote) {
   remote = fakeRemote || null;
   resetRemoteSession();
+}
+
+// ---------------------------------------------------------------------------
+// Firebase Authentication for email-and-password accounts
+//
+// When Firebase is in use (VITE_FIRESTORE_ENABLED === 'true') an email-and-
+// password account is a Firebase Auth account: its id is the Firebase uid, as
+// for Google and GitHub, and no password or password hash is kept in this
+// browser. Without Firebase the account lives in local state with a hash.
+// In a browser getAuth() keeps the signed-in user across reloads (IndexedDB,
+// falling back to localStorage), so nothing here has to restore it.
+// ---------------------------------------------------------------------------
+function authUserSnapshot(user) {
+  if (!user) return null;
+  return {
+    uid: String(user.uid),
+    email: String(user.email || '').toLowerCase(),
+    // 'password', 'google.com', 'github.com'
+    providers: (user.providerData || []).map((entry) => entry.providerId),
+  };
+}
+
+// getClients is injectable so the same code can be pointed at the Firebase emulators.
+export function createFirebaseAuthClient(getClients = getFirebaseClients) {
+  return {
+    // The Firebase Auth user in this browser ({ uid, email, providers }) or null.
+    async currentUser() {
+      const { auth } = getClients();
+      if (typeof auth.authStateReady === 'function') await auth.authStateReady();
+      return authUserSnapshot(auth.currentUser);
+    },
+    async register(email, password) {
+      const { auth } = getClients();
+      return authUserSnapshot((await createUserWithEmailAndPassword(auth, email, password)).user);
+    },
+    async signIn(email, password) {
+      const { auth } = getClients();
+      return authUserSnapshot((await signInWithEmailAndPassword(auth, email, password)).user);
+    },
+    // Firebase changes a password only for a user who has just proved the current one.
+    async changePassword(currentPassword, newPassword) {
+      const { auth } = getClients();
+      if (typeof auth.authStateReady === 'function') await auth.authStateReady();
+      const user = auth.currentUser;
+      if (!user) throw Object.assign(new Error('No Firebase Auth user is signed in.'), { code: 'auth/null-user' });
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword));
+      await updatePassword(user, newPassword);
+    },
+    async signOut() {
+      const { auth } = getClients();
+      await firebaseSignOut(auth);
+    },
+  };
+}
+
+let authClient = env.VITE_FIRESTORE_ENABLED === 'true' ? createFirebaseAuthClient() : null;
+
+// Tests swap in a fake auth client ({ currentUser, register, signIn, changePassword, signOut }) or null.
+export function setSparkAuthForTests(fakeAuthClient) {
+  authClient = fakeAuthClient || null;
+}
+
+const AUTH_TIMEOUT_MS = 20000;
+
+function callAuth(start) {
+  return withTimeout(Promise.resolve().then(start), AUTH_TIMEOUT_MS);
+}
+
+function emailAuthFailure(reason, action) {
+  const { message, status, field } = emailAuthError(reason, action);
+  return createError(message, status, field ? { field } : {});
+}
+
+// { known: true, uid } once Firebase Auth has said who is signed in (uid is null
+// for nobody), { known: false } when it could not say in time.
+async function firebaseSessionUid() {
+  try {
+    const current = await withTimeout(Promise.resolve().then(() => authClient.currentUser()), 4000);
+    return { known: true, uid: current?.uid || null };
+  } catch {
+    return { known: false, uid: null };
+  }
 }
 
 function withTimeout(promise, ms) {
@@ -684,8 +780,7 @@ function codeforcesFailure(error, handle) {
 
 const SHARED_MESSAGES = {
   disabled: 'Saved on this device only. The shared leaderboard is not switched on for this site yet, so other members cannot see this score.',
-  'not-signed-in-password': 'Saved on this device only. Email-and-password accounts are not connected to the shared leaderboard yet, so other members cannot see this score.',
-  'not-signed-in': 'Saved on this device only. Your Google or GitHub sign-in is no longer active in this browser. Sign out and sign in again so other members can see this score.',
+  'not-signed-in': 'Saved on this device only. Your sign-in is no longer active in this browser. Sign out and sign in again so other members can see this score.',
   'permission-denied': 'Saved on this device only. The shared leaderboard did not accept the update, so other members cannot see this score.',
   offline: 'Saved on this device only for now. The shared leaderboard could not be reached. Use Refresh to try again.',
   error: 'Saved on this device only for now. The shared leaderboard could not be updated. Use Refresh to try again.',
@@ -697,8 +792,7 @@ function sharedOutcome(user, reason) {
     return { ok: true, reason: null, message: '' };
   }
   user.codeforcesShare = { ok: false, reason };
-  const key = reason === 'not-signed-in' && user.passwordHash && !user.provider ? 'not-signed-in-password' : reason;
-  return { ok: false, reason, message: SHARED_MESSAGES[key] || SHARED_MESSAGES.error };
+  return { ok: false, reason, message: SHARED_MESSAGES[reason] || SHARED_MESSAGES.error };
 }
 
 // Writes the member's own public record (and the reservation of their handle)
@@ -856,6 +950,379 @@ async function refreshCodeforcesStats(state, user, { force = false } = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Accounts on Firebase Auth
+// ---------------------------------------------------------------------------
+const EXPIRED_SESSION_TOKEN = '\u0000expired-session';
+const MIGRATION_RETRY_AFTER_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_NOTIFICATION_PREFERENCES = { contestAnnouncements: true, icpcEvents: true };
+const OAUTH_PROVIDER_LABELS = { google: 'Google', github: 'GitHub' };
+
+// An email-and-password account that exists only in this browser's local state
+// and is opened with the stored password hash: every such account while
+// Firebase is not in use, and accounts created before email-and-password
+// sign-in was moved onto Firebase Auth.
+function isLocalOnlyAccount(user) {
+  return Boolean(user?.passwordHash) && !user.provider && String(user.id || user._id).startsWith('usr_');
+}
+
+// While Firebase is in use a local-only account does not keep a session: signing
+// in is what moves it onto Firebase Auth. Two exceptions: the seeded demo account
+// (never moved), and an account whose move could not be done at its last sign-in.
+// That one stays usable on this device and is asked to sign in again after a day,
+// so the move is retried.
+function localOnlySessionAllowed(user) {
+  if (String(user.id) === DEMO_USER_ID) return true;
+  const deferredAt = Date.parse(user.migrationDeferredAt || '');
+  return Number.isFinite(deferredAt) && Date.now() - deferredAt < MIGRATION_RETRY_AFTER_MS;
+}
+
+function localOnlySession(state, user) {
+  if (String(user.id) !== DEMO_USER_ID) user.migrationDeferredAt = new Date().toISOString();
+  return { token: issueSessionToken(state, user), user: presentUser(user) };
+}
+
+// Firebase in use: true when the adapter still has this session but it cannot be
+// used any more, so the member has to sign in again instead of carrying on with
+// writes that Firestore would reject. That is the case when Firebase Auth has no
+// user or a different user (cleared site data, signed out in another tab), and
+// for a local-only account that has not been moved onto Firebase Auth yet.
+async function sessionNeedsSignIn(state, token) {
+  const userId = state.sessionsByToken[token] || token;
+  const user = state.users.find((u) => String(u._id || u.id) === String(userId));
+  if (!user) return false;
+  let stale;
+  if (isLocalOnlyAccount(user)) {
+    stale = !localOnlySessionAllowed(user);
+  } else {
+    const { known, uid } = await firebaseSessionUid();
+    stale = known && uid !== String(user.id);
+  }
+  if (stale && state.sessionsByToken[token]) {
+    delete state.sessionsByToken[token];
+    saveState(state);
+  }
+  return stale;
+}
+
+// { ok: true, data } (data is null when the document does not exist) or
+// { ok: false } when Firestore could not answer.
+async function readRemoteDoc(collectionName, docId) {
+  if (!remote) return { ok: false };
+  try {
+    const data = await withTimeout(Promise.resolve(remote.read(collectionName, String(docId))), 5000);
+    return { ok: true, data: isPlainObject(data) ? data : null };
+  } catch {
+    return { ok: false };
+  }
+}
+
+// Takes a uniqueness lock ({ uid }) for an account. 'ok': the account holds it.
+// 'taken': another account does. 'failed': could not be settled this time.
+// A lock that is already ours is not written again (studentIds are write-once).
+async function claimLock(collectionName, docId, uid, data) {
+  const existing = await readRemoteDoc(collectionName, docId);
+  if (existing.ok && existing.data) return existing.data.uid === uid ? 'ok' : 'taken';
+  const result = await syncDocToFirestore(collectionName, docId, data);
+  return result.ok ? 'ok' : 'failed';
+}
+
+function clearCodeforcesHandle(user) {
+  applyCodeforcesHandle(user, '');
+  delete user.profile.codeforces;
+}
+
+// Rows that belong to one account. Their ids are built from the account id
+// ({other id}_{account id}), so moving a row to another account re-keys it.
+const ACCOUNT_ROW_COLLECTIONS = [
+  { name: 'registrations', owner: 'user', keyOf: (row, uid) => `${row.event}_${uid}` },
+  { name: 'roadmapEnrollments', owner: 'student', keyOf: (row, uid) => `${row.cycle}_${uid}` },
+  { name: 'roadmapAttendance', owner: 'student', keyOf: (row, uid) => `${row.session}_${uid}` },
+  { name: 'roadmapProgress', owner: 'student', keyOf: (row, uid) => `${row.roadmap}_${uid}` },
+  { name: 'notifications', owner: 'user', keyOf: null },
+];
+
+// Points everything in local state that refers to account `fromId` at `toId`:
+// its rows (re-keyed), createdBy on anything it created, its sessions (ended:
+// the caller issues a new one) and the in-memory Codeforces bookkeeping.
+// A row the target account already has is kept as it is and the moved one is
+// dropped. Returns the re-keyed rows as [collectionName, id] for syncing.
+function moveAccountRows(state, fromId, toId) {
+  const moved = [];
+  for (const { name, owner, keyOf } of ACCOUNT_ROW_COLLECTIONS) {
+    const rows = Array.isArray(state[name]) ? state[name] : [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (String(row[owner]) !== fromId) continue;
+      if (keyOf) {
+        const nextId = keyOf(row, toId);
+        if (rows.some((other) => other !== row && String(other.id || other._id) === nextId)) {
+          rows.splice(index, 1);
+          continue;
+        }
+        row.id = nextId;
+        row._id = nextId;
+        moved.push([name, nextId]);
+      }
+      row[owner] = toId;
+    }
+  }
+  for (const collectionRows of Object.values(state)) {
+    if (!Array.isArray(collectionRows)) continue;
+    for (const item of collectionRows) {
+      if (isPlainObject(item) && String(item.createdBy) === fromId) item.createdBy = toId;
+    }
+  }
+  for (const [sessionToken, userId] of Object.entries(state.sessionsByToken || {})) {
+    if (String(userId) === fromId) delete state.sessionsByToken[sessionToken];
+  }
+  codeforcesSyncInFlight.delete(fromId);
+  codeforcesFailedAttempts.delete(fromId);
+  return moved;
+}
+
+function queueRemoteRows(user, rows) {
+  if (!rows.length) return;
+  user.pendingRemote = { ...(user.pendingRemote || {}), records: [...(user.pendingRemote?.records || []), ...rows] };
+}
+
+// Moves a local-only account onto its Firebase Auth uid: the record keeps all
+// its data and takes the uid as its id, every reference follows, and the stored
+// password hash is removed (Firebase Auth holds the password from now on).
+function moveLocalAccountToFirebase(state, account, uid, provider) {
+  const rows = moveAccountRows(state, String(account.id), uid);
+  account.id = uid;
+  account._id = uid;
+  account.provider = provider;
+  delete account.passwordHash;
+  delete account.migrationDeferredAt;
+  delete account.codeforcesShare;
+  // What this browser already knows about other members decides clashes now;
+  // the locks in Firestore are checked when the record is shared.
+  if (account.username && state.users.some((u) => u !== account && u.username === account.username)) {
+    account.username = null;
+  }
+  const handle = normalizeCodeforcesHandle(userCodeforcesHandle(account));
+  if (handle && state.users.some((u) => u !== account && normalizeCodeforcesHandle(userCodeforcesHandle(u)) === handle)) {
+    clearCodeforcesHandle(account);
+  }
+  account.updatedAt = new Date().toISOString();
+  account.pendingRemote = { account: true, records: rows };
+}
+
+// The person has proved that the local-only account `account` and the Firebase
+// account `target` are both theirs, and `target` already has a record. That
+// record is kept exactly as it is; only the rows of `account` it does not have
+// yet are added to it. The local profile is not merged in.
+function foldLocalAccountInto(state, account, target) {
+  const rows = moveAccountRows(state, String(account.id), String(target.id));
+  const index = state.users.indexOf(account);
+  if (index !== -1) state.users.splice(index, 1);
+  queueRemoteRows(target, rows);
+}
+
+// A record another browser shared for this uid becomes this browser's account,
+// instead of a blank account being created over it (which would wipe the
+// member's profile, handle and score for everyone).
+function adoptSharedRecord(record, email, provider) {
+  delete record.remoteOnly;
+  record.email = email;
+  record.provider = provider;
+  record.studentId = record.studentId || null;
+  record.notificationPreferences = record.notificationPreferences || { ...DEFAULT_NOTIFICATION_PREFERENCES };
+  record.role = ADMIN_EMAILS.has(email) ? 'admin' : 'user';
+}
+
+// Sends what an account still owes Firestore. `user.pendingRemote` is local
+// bookkeeping (it is not one of the public fields presentUser uploads):
+//   { account: true }      the account's own documents: username lock, public
+//                          record with its Codeforces lock, private record,
+//                          student ID lock
+//   { records: [[c, id]] } rows that were re-keyed to this account
+// Anything that fails stays listed and is tried again at the next sign-in or
+// page load, so an interrupted move or registration finishes later.
+async function flushPendingRemote(state, user) {
+  const pending = user.pendingRemote;
+  if (!pending || !remote) return;
+  const uid = String(user.id);
+  if ((await currentRemoteUid()) !== uid) return;
+
+  if (pending.account) {
+    let settled = true;
+    if (user.username) {
+      const lock = await claimLock('usernames', user.username, uid, { uid, createdAt: user.createdAt });
+      if (lock === 'taken') {
+        // Another member registered this username first: the username step asks for a new one.
+        user.username = null;
+        user.updatedAt = new Date().toISOString();
+      } else if (lock === 'failed') {
+        settled = false;
+      }
+    }
+    const handle = normalizeCodeforcesHandle(userCodeforcesHandle(user));
+    if (handle) {
+      const owner = await remoteHandleOwner(handle);
+      if (owner && owner !== uid) {
+        // Another member holds this handle. Without it the rest of the record can be shared.
+        clearCodeforcesHandle(user);
+        user.updatedAt = new Date().toISOString();
+      }
+    }
+    if (!(await shareUserRecord(state, user)).ok) settled = false;
+    const secrets = await syncDocToFirestore('userSecrets', uid, { email: user.email, studentId: user.studentId || null });
+    if (!secrets.ok) settled = false;
+    if (user.studentId) {
+      const lock = await claimLock('studentIds', user.studentId, uid, { uid, createdAt: user.createdAt });
+      if (lock === 'failed') settled = false;
+    }
+    if (settled) delete pending.account;
+  }
+
+  const remaining = [];
+  for (const [collectionName, id] of pending.records || []) {
+    const row = (state[collectionName] || []).find((item) => String(item.id || item._id) === id);
+    if (!row) continue;
+    // The rules accept a new registration only before check-in, so one that is
+    // already checked in stays on this device.
+    if (collectionName === 'registrations' && row.checkedInAt) continue;
+    const existing = await readRemoteDoc(collectionName, id);
+    if (existing.ok && existing.data) continue;
+    const result = await syncDocToFirestore(collectionName, id, row);
+    if (!result.ok && result.reason !== 'permission-denied') remaining.push([collectionName, id]);
+  }
+  if (remaining.length) pending.records = remaining;
+  else delete pending.records;
+
+  if (!pending.account && !pending.records) delete user.pendingRemote;
+  saveState(state);
+}
+
+// Firebase in use: the local account record for the Firebase Auth user who has
+// just signed in ({ uid, email, provider, name, pictureUrl }).
+// `localAccount` is a local-only account on this device that the same person
+// has proved is theirs (they entered its password, or signed in with Google or
+// GitHub using its email), or null.
+//   - A record with this uid already exists, here or in Firestore: it is the
+//     account. A shared record is adopted and never overwritten with local
+//     data; rows of `localAccount` are added to it where it has none.
+//   - No record exists anywhere: `localAccount` takes the uid (the move), or a
+//     new record is created.
+//   - Firestore could not say whether a shared record exists: nothing is
+//     created or moved and null is returned, because writing a record now
+//     could overwrite one that another device shared.
+async function accountForFirebaseUser(state, identity, localAccount) {
+  const { uid, email, provider } = identity;
+  const byUid = () => state.users.find((u) => String(u._id || u.id) === uid) || null;
+  let record = byUid();
+  if (!record && remote) {
+    const sharedDoc = await readRemoteDoc('users', uid);
+    if (!sharedDoc.ok) return null;
+    if (sharedDoc.data) {
+      mergeRemoteUser(state, uid, sharedDoc.data);
+      record = byUid();
+    }
+  }
+  if (record) {
+    if (!record.email || record.remoteOnly) {
+      adoptSharedRecord(record, email, provider);
+    } else {
+      record.provider = provider;
+      if (ADMIN_EMAILS.has(email) && record.role !== 'admin') record.role = 'admin';
+    }
+    if (localAccount) foldLocalAccountInto(state, localAccount, record);
+  } else if (localAccount) {
+    moveLocalAccountToFirebase(state, localAccount, uid, provider);
+    record = localAccount;
+  } else {
+    const now = new Date().toISOString();
+    record = {
+      id: uid,
+      _id: uid,
+      name: String(identity.name || email.split('@')[0]).slice(0, 80),
+      email,
+      username: null,
+      studentId: null,
+      provider,
+      role: ADMIN_EMAILS.has(email) ? 'admin' : 'user',
+      profile: {
+        pictureUrl: identity.pictureUrl || '',
+        links: { codeforcesHandle: '', codeforcesUrl: '', otherProfiles: [] },
+        codeforcesVerification: { status: 'unverified', handle: '', selfReported: false },
+      },
+      notificationPreferences: { ...DEFAULT_NOTIFICATION_PREFERENCES },
+      createdAt: now,
+      updatedAt: now,
+      pendingRemote: { account: true },
+    };
+    state.users.push(record);
+  }
+  saveState(state);
+  await flushPendingRemote(state, record);
+  return record;
+}
+
+// Firebase in use: email-and-password sign-in.
+async function signInWithEmailPassword(state, email, password) {
+  const passHash = await sha256Hex(password);
+  // A local-only account on this device that this exact password opens.
+  const proven = state.users.find((u) => u.email === email && isLocalOnlyAccount(u) && u.passwordHash === passHash) || null;
+  const isDemo = Boolean(proven) && String(proven.id) === DEMO_USER_ID;
+  const localAccount = proven && !isDemo ? proven : null;
+
+  let firebaseUser = null;
+  let failure = null;
+  try {
+    firebaseUser = await callAuth(() => authClient.signIn(email, password));
+  } catch (error) {
+    failure = error;
+  }
+  if (!firebaseUser && localAccount && isWrongCredentials(failure)) {
+    // Firebase Auth has no account that this password opens, and the password
+    // is right for the account on this device: create its Firebase Auth account.
+    try {
+      firebaseUser = await callAuth(() => authClient.register(email, password));
+      failure = null;
+    } catch (error) {
+      failure = error;
+    }
+    if (emailAuthErrorCode(failure) === 'auth/email-already-in-use') {
+      // The email belongs to a Firebase Auth account with another password or
+      // with Google/GitHub sign-in. Only that sign-in can prove who this is.
+      throw createError(
+        'This email already has an account that signs in with Google, GitHub or a different password. Sign in that way instead.',
+        409,
+        { field: 'email' },
+      );
+    }
+  }
+  if (!firebaseUser && isWrongCredentials(failure)) {
+    // A Google/GitHub account that was given a password on this device before
+    // passwords moved to Firebase Auth: that password is no longer a way in.
+    const viaProvider = state.users.find(
+      (u) => u.email === email && u.passwordHash === passHash && !isLocalOnlyAccount(u) && OAUTH_PROVIDER_LABELS[u.provider],
+    );
+    if (viaProvider) {
+      const label = OAUTH_PROVIDER_LABELS[viaProvider.provider];
+      throw createError(`This account signs in with ${label}. Use Continue with ${label} instead.`, 401);
+    }
+  }
+  if (!firebaseUser) {
+    // The demo account is never moved. Any other local-only account stays usable
+    // on this device while its Firebase Auth account cannot be created (sign-in
+    // service unreachable, email sign-in not switched on, password not accepted
+    // by the project's password rules) - but not when the account was disabled.
+    if (proven && (isDemo || emailAuthErrorCode(failure) !== 'auth/user-disabled')) return localOnlySession(state, proven);
+    throw emailAuthFailure(failure, 'login');
+  }
+
+  const user = await accountForFirebaseUser(state, { uid: firebaseUser.uid, email, provider: 'password' }, localAccount);
+  if (!user) {
+    if (localAccount) return localOnlySession(state, localAccount);
+    throw createError('We could not load your account. Check your connection and try again.', 503);
+  }
+  return { token: issueSessionToken(state, user), user: presentUser(user) };
+}
+
 function generateScheduleSessions(cycle) {
   const start = new Date(`${cycle.startDate}T00:00:00Z`);
   const end = new Date(`${cycle.endDate}T23:59:59Z`);
@@ -885,9 +1352,7 @@ function generateScheduleSessions(cycle) {
 }
 
 export async function handleSparkRequest(rawPath, options = {}) {
-  const token = options.token || null;
-  await hydrateFromFirestore(token);
-  const state = loadState();
+  let token = options.token || null;
   const method = String(options.method || 'GET').toUpperCase();
   const body = options.body
     ? typeof options.body === 'string'
@@ -899,6 +1364,25 @@ export async function handleSparkRequest(rawPath, options = {}) {
   const pathname = url.pathname.replace(/^\/api(?=\/|$)/, '') || '/';
   const query = Object.fromEntries(url.searchParams.entries());
 
+  // Sign-out ends the adapter session and the Firebase Auth session together.
+  // It does not wait for Firestore, so it cannot finish after a later sign-in.
+  if (pathname === '/auth/logout' && method === 'POST') {
+    const current = loadState();
+    if (token && current.sessionsByToken[token]) {
+      delete current.sessionsByToken[token];
+      saveState(current);
+    }
+    if (authClient) await callAuth(() => authClient.signOut()).catch(() => {});
+    return { signedOut: true };
+  }
+
+  await hydrateFromFirestore(token);
+  const state = loadState();
+
+  // Firebase in use: a session that Firebase Auth no longer backs is treated as
+  // expired by every route that needs a signed-in member.
+  if (token && authClient && (await sessionNeedsSignIn(state, token))) token = EXPIRED_SESSION_TOKEN;
+
   // 1. Health check
   if (pathname === '/health' && method === 'GET') {
     return { status: 'ok', backend: 'firebase-spark', projectId: 'icpc-pua' };
@@ -908,20 +1392,30 @@ export async function handleSparkRequest(rawPath, options = {}) {
   if ((pathname === '/auth/google' || pathname === '/auth/github' || pathname === '/auth/oauth') && method === 'POST') {
     const email = String(body.email || (body.idToken ? `user_${body.idToken.slice(0, 8)}@pua.edu.eg` : '')).toLowerCase().trim();
     if (!email) throw createError('OAuth sign-in did not provide a valid email address.', 400);
+    const provider = body.provider || (pathname.includes('github') ? 'github' : 'google');
+    if (authClient && body.uid) {
+      // Firebase in use: the account is the one whose id is this Firebase uid. A
+      // local-only account on this device with the same email is the same person
+      // (the provider vouches for the email), so it is moved onto the uid.
+      const localAccount =
+        state.users.find((u) => u.email === email && isLocalOnlyAccount(u) && String(u.id) !== DEMO_USER_ID) || null;
+      const account = await accountForFirebaseUser(
+        state,
+        { uid: String(body.uid), email, provider, name: body.name, pictureUrl: body.pictureUrl },
+        localAccount,
+      );
+      if (!account) {
+        if (localAccount) return localOnlySession(state, localAccount);
+        throw createError('We could not load your account. Check your connection and try again.', 503);
+      }
+      return { token: issueSessionToken(state, account), user: presentUser(account) };
+    }
     let user = state.users.find((u) => u.email === email);
     const now = new Date().toISOString();
     if (!user && body.uid) {
-      // This member already has a public record (read back from Firestore, written
-      // from another browser). Adopt it instead of creating a blank account over it,
-      // which would wipe their profile, handle and score for everyone.
       const existing = state.users.find((u) => String(u._id || u.id) === String(body.uid) && !u.email);
       if (existing) {
-        delete existing.remoteOnly;
-        existing.email = email;
-        existing.provider = body.provider || (pathname.includes('github') ? 'github' : 'google');
-        existing.studentId = existing.studentId || null;
-        existing.notificationPreferences = existing.notificationPreferences || { contestAnnouncements: true, icpcEvents: true };
-        existing.role = ADMIN_EMAILS.has(email) ? 'admin' : 'user';
+        adoptSharedRecord(existing, email, provider);
         user = existing;
         saveState(state);
       }
@@ -936,7 +1430,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
         email,
         username: null,
         studentId: null,
-        provider: body.provider || (pathname.includes('github') ? 'github' : 'google'),
+        provider,
         role: isAdminEmail ? 'admin' : 'user',
         profile: {
           pictureUrl: body.pictureUrl || '',
@@ -987,8 +1481,23 @@ export async function handleSparkRequest(rawPath, options = {}) {
       throw createError('An account with this student ID already exists.', 409, { field: 'studentId' });
     }
 
+    // Firebase in use: the account is created in Firebase Auth, its id is the
+    // Firebase uid and the password is kept by Firebase Auth only.
+    let firebaseUid = null;
+    if (authClient) {
+      // The username lock is checked before the Firebase Auth account exists, so
+      // a clash cannot leave an account behind that has no record.
+      const lock = await readRemoteDoc('usernames', username);
+      if (lock.ok && lock.data) throw createError('This username is already taken.', 409, { field: 'username' });
+      try {
+        firebaseUid = (await callAuth(() => authClient.register(email, password))).uid;
+      } catch (error) {
+        throw emailAuthFailure(error, 'register');
+      }
+    }
+
     const now = new Date().toISOString();
-    const id = `usr_${randomHex(8)}`;
+    const id = firebaseUid || `usr_${randomHex(8)}`;
     const user = {
       id,
       _id: id,
@@ -996,7 +1505,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
       email,
       username,
       studentId,
-      passwordHash: await sha256Hex(password),
+      ...(firebaseUid ? { provider: 'password' } : { passwordHash: await sha256Hex(password) }),
       role: ADMIN_EMAILS.has(email) ? 'admin' : 'user',
       profile: {
         links: { codeforcesHandle: '', codeforcesUrl: '', otherProfiles: [] },
@@ -1008,11 +1517,16 @@ export async function handleSparkRequest(rawPath, options = {}) {
     };
     state.users.push(user);
     saveState(state);
-    await syncUserDoc(state, user);
-    await syncDocToFirestore('userSecrets', user.id, { email: user.email, studentId: user.studentId });
-    await syncDocToFirestore('usernames', username, { uid: user.id, createdAt: now });
-    if (studentId) {
-      await syncDocToFirestore('studentIds', studentId, { uid: user.id, createdAt: now });
+    if (firebaseUid) {
+      user.pendingRemote = { account: true };
+      await flushPendingRemote(state, user);
+    } else {
+      await syncUserDoc(state, user);
+      await syncDocToFirestore('userSecrets', user.id, { email: user.email, studentId: user.studentId });
+      await syncDocToFirestore('usernames', username, { uid: user.id, createdAt: now });
+      if (studentId) {
+        await syncDocToFirestore('studentIds', studentId, { uid: user.id, createdAt: now });
+      }
     }
     const sessionToken = issueSessionToken(state, user);
     return { token: sessionToken, user: presentUser(user) };
@@ -1022,6 +1536,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
   if (pathname === '/auth/login' && method === 'POST') {
     const email = String(body.email || '').toLowerCase().trim();
     const password = String(body.password || '');
+    if (authClient) return signInWithEmailPassword(state, email, password);
     const passHash = await sha256Hex(password);
     const user = state.users.find((u) => u.email === email && u.passwordHash === passHash);
     if (!user) throw createError('Email or password is incorrect.', 401);
@@ -1032,6 +1547,8 @@ export async function handleSparkRequest(rawPath, options = {}) {
   // 5. Auth: Current User
   if (pathname === '/auth/me' && method === 'GET') {
     const user = getCurrentUser(state, token);
+    // Finishes a registration or account move whose writes were interrupted.
+    if (authClient && user.pendingRemote) await flushPendingRemote(state, user);
     return { user: presentUser(user) };
   }
 
@@ -1081,6 +1598,37 @@ export async function handleSparkRequest(rawPath, options = {}) {
   // 8. Auth: Password Update
   if (pathname === '/auth/password' && method === 'PUT') {
     const user = getCurrentUser(state, token);
+    if (authClient && !isLocalOnlyAccount(user)) {
+      // Firebase in use: the password lives in Firebase Auth, which changes it
+      // only after the current password has been proved again.
+      const currentPassword = String(body.currentPassword || '');
+      const nextPassword = String(body.newPassword || '');
+      const firebaseUser = await callAuth(() => authClient.currentUser()).catch(() => null);
+      if (!firebaseUser || firebaseUser.uid !== String(user.id)) {
+        throw createError('Your session has expired. Please sign in again.', 401);
+      }
+      if (!firebaseUser.providers.includes('password')) {
+        const label = OAUTH_PROVIDER_LABELS[user.provider] || 'Google or GitHub';
+        throw createError(`This account signs in with ${label}, so it has no password to change here.`, 400);
+      }
+      if (nextPassword.length < 8) {
+        throw createError('New password must be at least 8 characters.', 400);
+      }
+      if (nextPassword === currentPassword) {
+        throw createError('Choose a new password that is different from your current password.', 400);
+      }
+      try {
+        await callAuth(() => authClient.changePassword(currentPassword, nextPassword));
+      } catch (error) {
+        throw emailAuthFailure(error, 'change-password');
+      }
+      // No copy of the password is kept here, so nothing stale can open the account.
+      if (user.passwordHash) {
+        delete user.passwordHash;
+        saveState(state);
+      }
+      return { message: 'Password updated.' };
+    }
     const currentHash = await sha256Hex(body.currentPassword || '');
     if (user.passwordHash && user.passwordHash !== currentHash) {
       throw createError('Your current password is incorrect.', 401);

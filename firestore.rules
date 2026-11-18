@@ -9,6 +9,8 @@ rules_version = '2';
 //
 // 2. Collection: users/{uid}
 //    - Public user profiles & leaderboard records.
+//    - {uid} is the Firebase Auth uid for every sign-in method: Google, GitHub
+//      and email-and-password.
 //    - Fields: uid, fullName, username, role ('user' | 'admin'),
 //      attendancePoints, avatar, bio, faculty, academicYear,
 //      codeforcesHandle, githubUrl, linkedinUrl, createdAt, updatedAt.
@@ -88,10 +90,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // The owner's email grants admin only when the sign-in provider has verified
+    // it (Google does). With email-and-password sign-in anyone can type any email
+    // when creating an account, and that email is unverified.
     function isAdmin() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'enjoyplayax@gmail.com'
+        (request.auth.token.email == 'enjoyplayax@gmail.com' && request.auth.token.email_verified == true)
       );
     }
 

@@ -47,4 +47,13 @@ test('Firestore Security Rules Structural & Security Invariants Verification', a
     const { MAX_CODEFORCES_SOLVED_COUNT } = await import('../src/shared/utils/codeforcesScore.js');
     assert.ok(rules.includes(`<= ${MAX_CODEFORCES_SOLVED_COUNT}`));
   });
+
+  await t.test('7. The owner email grants admin only when the sign-in provider verified it', () => {
+    // Email-and-password sign-up accepts any email unverified, so the email alone must not be enough.
+    assert.match(
+      rules,
+      /request\.auth\.token\.email\s*==\s*'enjoyplayax@gmail\.com'\s*&&\s*request\.auth\.token\.email_verified\s*==\s*true/,
+    );
+    assert.equal(rules.match(/request\.auth\.token\.email\s*==/g)?.length, 1, 'no other rule trusts the email claim');
+  });
 });

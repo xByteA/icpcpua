@@ -174,7 +174,7 @@ export function AuthPage({
           ...form,
           username: e.target.value
         })} /></label>}
-        <label>Password<input autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" minLength="8" required value={form.password} onChange={e => setForm({
+        <label>Password<input autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" minLength="8" required {...fieldErrorProps('password')} value={form.password} onChange={e => setForm({
           ...form,
           password: e.target.value
         })} /></label>
