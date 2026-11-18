@@ -12,6 +12,7 @@ function RoadmapCard({
   hasCycles,
   cycleAvailability,
 }) {
+  const location = useLocation();
   const difficulty = ['beginner', 'intermediate', 'advanced'].includes(roadmap.difficulty?.toLowerCase())
     ? roadmap.difficulty.toLowerCase()
     : null;
@@ -33,7 +34,7 @@ function RoadmapCard({
         <span className="roadmap-live-dot" aria-hidden="true" />
         <span>Open Cycle: {openCycle.title}</span>
         <ArrowRight size={5} aria-hidden="true" />
-      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login">Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability unavailable</div>}
+      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability unavailable</div>}
       <Link className="button button-dark roadmap-card-link" to={`/roadmaps/${roadmap.slug}`}>Explore roadmap <ArrowRight size={16} aria-hidden="true" /></Link>
     </div>
   </article>;
@@ -597,7 +598,7 @@ export function RoadmapCyclePage({
         {enrolled && [...(selectedSession.materials || []), ...(selectedSession.problemSets || [])].length > 0 && <div className="roadmap-session-dialog-resources">
           {[...(selectedSession.materials || []), ...(selectedSession.problemSets || [])].map(resource => <a className="roadmap-resource-link" key={`${resource.title}-${resource.url}`} href={resource.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> {resource.title}</a>)}
         </div>}
-        {!enrolled && cycle.status === 'published' && selectedSession.status !== 'cancelled' && (user ? <button className="button button-dark" type="button" disabled={busy} onClick={enroll}>{busy ? 'Enrolling...' : 'Enroll in cycle'} <ArrowRight size={16} /></button> : <Link className="button button-dark" to="/login">Sign in to enroll <ArrowRight size={16} /></Link>)}
+        {!enrolled && cycle.status === 'published' && selectedSession.status !== 'cancelled' && (user ? <button className="button button-dark" type="button" disabled={busy} onClick={enroll}>{busy ? 'Enrolling...' : 'Enroll in cycle'} <ArrowRight size={16} /></button> : <Link className="button button-dark" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to enroll <ArrowRight size={16} /></Link>)}
       </section>
     </div>}
   </main>;

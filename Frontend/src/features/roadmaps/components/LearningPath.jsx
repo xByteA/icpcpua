@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ArrowRight, BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, FileText, LockKeyhole, Maximize2, PlayCircle, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import { api } from "../../../shared/services/api.js";
 import { weekdays, sessionDateKey, formatCalendarMonth, formatCalendarDay, problemProgressKey, clampGraphView } from '../utils/roadmapUtils.js';
@@ -17,6 +17,7 @@ export function LearningPath({
   user,
   roadmapSlug
 }) {
+  const location = useLocation();
   const viewportRef = useRef(null);
   const dialogCloseRef = useRef(null);
   const nodeButtonRefs = useRef(new Map());
@@ -651,7 +652,7 @@ export function LearningPath({
                 </div>)}
             </div>
           </div>
-          {progressStatus === 'unavailable' && <p className="learning-sidebar-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login">Sign in</Link> to save your progress.</>}</p>}
+          {progressStatus === 'unavailable' && <p className="learning-sidebar-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to save your progress.</>}</p>}
           {progressStatus === 'error' && <p className="learning-progress-error" role="alert">{progressError} <button type="button" onClick={() => setProgressRetry(current => current + 1)}>Retry</button></p>}
         </section>
 
@@ -665,7 +666,7 @@ export function LearningPath({
           {!calendarCollapsed && <>
             <p className="learning-calendar-description">Scheduled sessions from cycles you joined.</p>
             {scheduleStatus === 'loading' && <p className="learning-sidebar-message">Loading your enrolled sessions…</p>}
-            {scheduleStatus === 'unavailable' && <p className="learning-sidebar-message"><Link to="/login">Sign in</Link> to see your cycle schedule.</p>}
+            {scheduleStatus === 'unavailable' && <p className="learning-sidebar-message"><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to see your cycle schedule.</p>}
             {scheduleStatus === 'error' && <p className="learning-progress-error" role="alert">{scheduleError} <button type="button" onClick={() => setScheduleRetry(current => current + 1)}>Retry</button></p>}
             {scheduleStatus === 'ready' && <>
               <div className="learning-calendar-toolbar">
@@ -759,7 +760,7 @@ export function LearningPath({
             </div> : <p className="learning-topic-empty">No prerequisites for this topic.</p>}
           </section>
 
-          {progressStatus === 'unavailable' && <p className="learning-node-progress-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login">Sign in</Link> to save your problem progress.</>}</p>}
+          {progressStatus === 'unavailable' && <p className="learning-node-progress-message">{token ? 'Student accounts can track problem progress.' : <><Link to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in</Link> to save your problem progress.</>}</p>}
           {(progressStatus === 'error' || progressError) && <p className="learning-progress-error" role="alert">{progressError} {progressStatus === 'error' && <button type="button" onClick={() => setProgressRetry(current => current + 1)}>Retry</button>}</p>}
 
           <section className={`learning-node-problems${selectedUnmetDependencies.length ? ' is-locked' : ''}`} aria-labelledby="learning-node-problems-title">
