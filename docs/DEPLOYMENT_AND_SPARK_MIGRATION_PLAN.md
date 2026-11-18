@@ -36,6 +36,11 @@ VITE_ACPC_TARGET_DATE=2027-08-01T00:00:00+03:00
 VITE_ADMIN_EMAILS=enjoyplayax@gmail.com
 ```
 
+`VITE_FIRESTORE_ENABLED=true` (not set by default) turns on sharing through Firestore. Without it every
+browser keeps its own data and the leaderboard shows only accounts created in that browser. Deploy
+`firestore.rules` before setting it. Only Google/GitHub accounts can write to Firestore; email-and-password
+accounts are local to the browser they were created in.
+
 ---
 
 ## 3. Architecture Reference

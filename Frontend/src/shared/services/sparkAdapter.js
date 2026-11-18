@@ -2,12 +2,27 @@ import QRCode from 'qrcode';
 import seedFixture from '../data/seedFixture.json' with { type: 'json' };
 import { ADMIN_EMAILS, getFirebaseClients } from './firebase.js';
 import { validateRoadmapForPublish } from '../../features/roadmaps/utils/roadmapPublishValidation.js';
+import { CodeforcesError, fetchCodeforcesSolved } from './codeforcesApi.js';
+import {
+  CODEFORCES_POINTS_PER_PROBLEM,
+  LEADERBOARD_INCLUDES_ATTENDANCE_POINTS,
+  codeforcesPoints,
+  isCodeforcesSyncStale,
+  isValidCodeforcesHandle,
+  leaderboardPoints,
+  normalizeCodeforcesHandle,
+  sanitizeSolvedCount,
+  solvedCountForHandle,
+} from '../utils/codeforcesScore.js';
 import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
+  query as firestoreQuery,
   setDoc,
+  where,
 } from 'firebase/firestore';
 
 const STORAGE_KEY = 'icpc_pua_spark_db_v1';
@@ -105,7 +120,6 @@ function buildInitialState() {
 }
 
 let memoryState = null;
-let firestoreSynced = false;
 
 function loadState() {
   if (memoryState) return memoryState;
@@ -152,56 +166,256 @@ export function resetSparkStoreForTests() {
 }
 
 const env = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {};
-let firestoreCircuitBroken = env.VITE_FIRESTORE_ENABLED !== 'true';
 
-async function syncDocToFirestore(collectionName, docId, data) {
-  if (firestoreCircuitBroken) return;
+// ---------------------------------------------------------------------------
+// Firestore sharing layer
+//
+// Local state (localStorage) is always the source for this browser. When
+// VITE_FIRESTORE_ENABLED === 'true' the same records are also written to
+// Firestore and public records are read back so other browsers can see them.
+// Every remote call reports its own outcome: one rejected read or write never
+// switches sharing off for the rest of the session.
+// ---------------------------------------------------------------------------
+const REMOTE_TIMEOUT_MS = 8000;
+const REMOTE_OFFLINE_COOLDOWN_MS = 60 * 1000;
+const USERS_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
+
+// getClients is injectable so the same code can be pointed at the Firebase emulators.
+export function createFirestoreRemote(getClients = getFirebaseClients) {
+  return {
+    // Uid of the Firebase Auth user in this browser, or null. Only Google/GitHub
+    // sign-in creates one; email-and-password accounts exist in local state only.
+    async currentUid() {
+      const { auth } = getClients();
+      if (typeof auth.authStateReady === 'function') await auth.authStateReady();
+      return auth.currentUser?.uid || null;
+    },
+    async write(collectionName, docId, data) {
+      const { db } = getClients();
+      await setDoc(doc(db, collectionName, String(docId)), clone(data), { merge: true });
+    },
+    async remove(collectionName, docId) {
+      const { db } = getClients();
+      await deleteDoc(doc(db, collectionName, String(docId)));
+    },
+    async read(collectionName, docId) {
+      const { db } = getClients();
+      const snap = await getDoc(doc(db, collectionName, String(docId)));
+      return snap.exists() ? snap.data() : null;
+    },
+    // filter is null (whole collection) or { field, value } for an equality query.
+    async list(collectionName, filter) {
+      const { db } = getClients();
+      const ref = collection(db, collectionName);
+      const snap = await getDocs(filter ? firestoreQuery(ref, where(filter.field, '==', filter.value)) : ref);
+      return snap.docs.map((d) => ({ docId: d.id, data: d.data() }));
+    },
+  };
+}
+
+let remote = env.VITE_FIRESTORE_ENABLED === 'true' ? createFirestoreRemote() : null;
+let remoteOfflineUntil = 0;
+let publicHydration = null;
+let hydratedSignedInUid = null;
+let hydratedAdminUid = null;
+let usersRefreshedAt = 0;
+
+function resetRemoteSession() {
+  remoteOfflineUntil = 0;
+  publicHydration = null;
+  hydratedSignedInUid = null;
+  hydratedAdminUid = null;
+  usersRefreshedAt = 0;
+}
+
+// Tests swap in a fake remote ({ currentUid, write, remove, read, list }) or null.
+export function setSparkRemoteForTests(fakeRemote) {
+  remote = fakeRemote || null;
+  resetRemoteSession();
+}
+
+function withTimeout(promise, ms) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error('Timed out.'), { code: 'timeout' })), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function classifyRemoteError(error) {
+  const code = String(error?.code || '');
+  if (code.includes('permission-denied') || code.includes('unauthenticated')) return 'permission-denied';
+  if (code.includes('timeout') || code.includes('unavailable') || code.includes('deadline-exceeded')) return 'offline';
+  return 'error';
+}
+
+// Runs one remote write and reports what happened: { ok: true } or
+// { ok: false, reason: 'disabled' | 'permission-denied' | 'offline' | 'error' }.
+// It never throws, so callers that do not care can ignore the result.
+async function runRemoteWrite(start) {
+  if (!remote) return { ok: false, reason: 'disabled' };
+  let pending;
   try {
-    const { db } = getFirebaseClients();
-    await setDoc(doc(db, collectionName, String(docId)), clone(data), { merge: true });
-  } catch {
-    firestoreCircuitBroken = true;
+    pending = Promise.resolve(start());
+  } catch (error) {
+    return { ok: false, reason: classifyRemoteError(error) };
+  }
+  if (Date.now() < remoteOfflineUntil) {
+    // Recently unreachable: let the SDK queue the write but do not wait for it.
+    pending.catch(() => {});
+    return { ok: false, reason: 'offline' };
+  }
+  try {
+    await withTimeout(pending, REMOTE_TIMEOUT_MS);
+    return { ok: true };
+  } catch (error) {
+    pending.catch(() => {});
+    const reason = classifyRemoteError(error);
+    if (reason === 'offline') remoteOfflineUntil = Date.now() + REMOTE_OFFLINE_COOLDOWN_MS;
+    return { ok: false, reason };
   }
 }
 
-async function deleteDocFromFirestore(collectionName, docId) {
-  if (firestoreCircuitBroken) return;
+function syncDocToFirestore(collectionName, docId, data) {
+  return runRemoteWrite(() => remote.write(collectionName, docId, data));
+}
+
+function deleteDocFromFirestore(collectionName, docId) {
+  return runRemoteWrite(() => remote.remove(collectionName, docId));
+}
+
+async function currentRemoteUid() {
+  if (!remote) return null;
   try {
-    const { db } = getFirebaseClients();
-    await deleteDoc(doc(db, collectionName, String(docId)));
+    return (await withTimeout(Promise.resolve(remote.currentUid()), 4000)) || null;
   } catch {
-    firestoreCircuitBroken = true;
+    return null;
   }
 }
 
-async function hydrateFromFirestoreOnce() {
-  if (firestoreSynced || firestoreCircuitBroken) return;
-  firestoreSynced = true;
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+// A user document read from Firestore was written by that user's own browser, so
+// it is treated as untrusted display data: only public fields are taken, the
+// document id (not a field inside it) decides whose record it is, and it can
+// never supply an email, password hash or session.
+function publicUserFromRemote(docId, data) {
+  return {
+    id: docId,
+    _id: docId,
+    name: typeof data.name === 'string' && data.name.trim() ? data.name.trim().slice(0, 80) : 'ICPC Member',
+    username: typeof data.username === 'string' && /^[a-z0-9_]{3,20}$/.test(data.username) ? data.username : null,
+    role: data.role === 'admin' ? 'admin' : 'user',
+    profile: isPlainObject(data.profile) ? clone(data.profile) : {},
+    createdAt: typeof data.createdAt === 'string' ? data.createdAt : null,
+    updatedAt: typeof data.updatedAt === 'string' ? data.updatedAt : null,
+    remoteOnly: true,
+  };
+}
+
+function mergeRemoteUser(state, docId, data) {
+  const incoming = publicUserFromRemote(String(docId), isPlainObject(data) ? data : {});
+  const index = state.users.findIndex((u) => String(u._id || u.id) === incoming.id);
+  if (index === -1) {
+    state.users.push(incoming);
+    return;
+  }
+  const local = state.users[index];
+  if (!local.email || local.remoteOnly) {
+    state.users[index] = incoming;
+    return;
+  }
+  // An account that signs in on this browser keeps its private fields. Local
+  // changes that have not reached Firestore yet (newer updatedAt) are kept.
+  if (String(local.updatedAt || '') > String(incoming.updatedAt || '')) return;
+  local.name = incoming.name;
+  local.username = incoming.username || local.username || null;
+  local.profile = incoming.profile;
+  local.updatedAt = incoming.updatedAt || local.updatedAt;
+}
+
+function mergeRemoteDocs(state, collectionName, remoteDocs) {
+  if (!Array.isArray(state[collectionName])) state[collectionName] = [];
+  if (collectionName === 'users') {
+    for (const { docId, data } of remoteDocs) mergeRemoteUser(state, docId, data);
+    return;
+  }
+  const byId = new Map(state[collectionName].map((item) => [String(item._id || item.id), item]));
+  for (const { docId, data } of remoteDocs) {
+    const record = { id: docId, _id: docId, ...data };
+    byId.set(String(record._id || record.id), record);
+  }
+  // Replace the contents in place so code holding the array keeps a live reference.
+  state[collectionName].splice(0, state[collectionName].length, ...byId.values());
+}
+
+// Reads one collection (optionally one status) and merges it into local state.
+// A failure here (rules, network) affects only this read.
+async function hydrateCollection(collectionName, filter = null) {
   try {
-    const { db } = getFirebaseClients();
+    const remoteDocs = await remote.list(collectionName, filter);
     const state = loadState();
-    const collectionsToSync = ['roadmaps', 'roadmapNodes', 'roadmapCycles', 'roadmapSessions', 'events', 'users', 'registrations'];
-    await Promise.all(
-      collectionsToSync.map(async (colName) => {
-        try {
-          const snap = await getDocs(collection(db, colName));
-          if (!snap.empty) {
-            const remoteDocs = snap.docs.map((d) => ({ id: d.id, _id: d.id, ...d.data() }));
-            const byId = new Map(state[colName].map((item) => [String(item._id || item.id), item]));
-            for (const r of remoteDocs) {
-              byId.set(String(r._id || r.id), r);
-            }
-            state[colName] = Array.from(byId.values());
-          }
-        } catch {
-          firestoreCircuitBroken = true;
-        }
-      }),
-    );
+    mergeRemoteDocs(state, collectionName, remoteDocs);
     saveState(state);
+    return true;
   } catch {
-    firestoreCircuitBroken = true;
+    return false;
   }
+}
+
+// Queries any visitor is allowed to run under firestore.rules. Roadmaps, cycles
+// and events are readable only by status, and security rules are not filters, so
+// each status is its own equality query; listing those collections unfiltered is
+// rejected for everyone except admins.
+const PUBLIC_HYDRATION_PLAN = [
+  ['roadmaps', { field: 'status', value: 'published' }],
+  ['roadmaps', { field: 'status', value: 'completed' }],
+  ['roadmapCycles', { field: 'status', value: 'published' }],
+  ['roadmapCycles', { field: 'status', value: 'completed' }],
+  ['events', { field: 'status', value: 'published' }],
+  ['roadmapNodes', null],
+  ['users', null],
+  ['registrations', null],
+];
+
+async function hydrateFromFirestore(token) {
+  if (!remote) return;
+  if (!publicHydration) {
+    usersRefreshedAt = Date.now();
+    publicHydration = Promise.all(PUBLIC_HYDRATION_PLAN.map(([name, filter]) => hydrateCollection(name, filter)));
+  }
+  // A slow network must not block the app: after the timeout the reads keep
+  // running and merge into local state whenever they finish.
+  await withTimeout(publicHydration, REMOTE_TIMEOUT_MS).catch(() => {});
+
+  const uid = await currentRemoteUid();
+  if (!uid) return;
+  const extra = [];
+  if (hydratedSignedInUid !== uid) {
+    hydratedSignedInUid = uid;
+    // roadmapSessions is readable only by a signed-in Firebase Auth user.
+    extra.push(hydrateCollection('roadmapSessions'));
+  }
+  if (hydratedAdminUid !== uid && token) {
+    const state = loadState();
+    const sessionUser = state.users.find((u) => String(u._id || u.id) === String(state.sessionsByToken[token] || ''));
+    if (sessionUser?.role === 'admin' && String(sessionUser.id) === uid) {
+      hydratedAdminUid = uid;
+      // Admins may list drafts as well, so read these collections whole.
+      extra.push(hydrateCollection('roadmaps'), hydrateCollection('roadmapCycles'), hydrateCollection('events'));
+    }
+  }
+  if (extra.length) await withTimeout(Promise.all(extra), REMOTE_TIMEOUT_MS).catch(() => {});
+}
+
+// Re-reads the public user records so the leaderboard shows other members'
+// latest scores without a page reload.
+async function refreshRemoteUsers() {
+  if (!remote || Date.now() - usersRefreshedAt < USERS_REFRESH_MIN_INTERVAL_MS) return;
+  usersRefreshedAt = Date.now();
+  await withTimeout(hydrateCollection('users'), REMOTE_TIMEOUT_MS).catch(() => {});
 }
 
 function presentUser(user, { includePrivate = true } = {}) {
@@ -214,6 +428,18 @@ function presentUser(user, { includePrivate = true } = {}) {
     selfReported: Boolean(cfHandle),
     verifiedAt: null,
   };
+  const cfStats = user.profile?.codeforces;
+  // The stored Codeforces result is only presented while it belongs to the
+  // current handle; after a handle change it disappears until the next sync.
+  const codeforces =
+    cfHandle && isPlainObject(cfStats) && normalizeCodeforcesHandle(cfStats.handle) === normalizeCodeforcesHandle(cfHandle)
+      ? {
+          handle: String(cfStats.handle),
+          solvedCount: sanitizeSolvedCount(cfStats.solvedCount),
+          syncedAt: typeof cfStats.syncedAt === 'string' ? cfStats.syncedAt : '',
+          truncated: cfStats.truncated === true,
+        }
+      : null;
   const out = {
     id: String(user._id || user.id),
     _id: String(user._id || user.id),
@@ -246,6 +472,7 @@ function presentUser(user, { includePrivate = true } = {}) {
         ...(user.profile?.privacy || {}),
       },
       codeforcesVerification: cfVerification,
+      codeforces,
     },
     notificationPreferences: {
       contestAnnouncements: true,
@@ -300,63 +527,97 @@ function computeCheckInWindow(item, now = new Date()) {
   };
 }
 
-function computeLeaderboard(state) {
-  const statsByUser = new Map();
-  const ensure = (u) => {
-    const uid = String(u.id || u._id);
-    if (!statsByUser.has(uid)) {
-      statsByUser.set(uid, {
-        userId: uid,
-        name: u.name,
-        username: u.username || null,
-        points: 0,
-        eventsAttended: 0,
-        problemsSolved: 0,
-      });
-    }
-    return statsByUser.get(uid);
-  };
+// The seeded demo account lives in every browser's local state; it is not a
+// real member and is kept off the leaderboard.
+const DEMO_USER_ID = 'usr_demo_student';
 
+function userCodeforcesHandle(user) {
+  return String(user?.profile?.links?.codeforcesHandle || '').trim();
+}
+
+// Attendance is still recorded per member (event check-ins and roadmap
+// sessions). It feeds the Events column; whether its points count toward the
+// leaderboard total is decided by LEADERBOARD_INCLUDES_ATTENDANCE_POINTS.
+function computeAttendanceStats(state) {
+  const stats = new Map();
+  const ensure = (userId) => {
+    const uid = String(userId);
+    if (!stats.has(uid)) stats.set(uid, { eventsAttended: 0, attendancePoints: 0 });
+    return stats.get(uid);
+  };
   for (const reg of state.registrations) {
-    if (reg.checkedInAt && reg.pointsAwarded > 0) {
-      const u = state.users.find((item) => String(item.id) === String(reg.user));
-      if (u && u.role !== 'admin') {
-        const entry = ensure(u);
-        entry.points += Number(reg.pointsAwarded) || 0;
-        entry.eventsAttended += 1;
-      }
+    const points = Number(reg.pointsAwarded) || 0;
+    if (reg.checkedInAt && points > 0) {
+      const entry = ensure(reg.user);
+      entry.attendancePoints += points;
+      entry.eventsAttended += 1;
     }
   }
-
   for (const att of state.roadmapAttendance) {
     const net = (Number(att.pointsAwarded) || 0) - (Number(att.pointsReversed) || 0);
     if (att.checkedInAt && net > 0 && !att.reversedAt) {
-      const u = state.users.find((item) => String(item.id) === String(att.student));
-      if (u && u.role !== 'admin') {
-        const entry = ensure(u);
-        entry.points += net;
-        entry.eventsAttended += 1;
-      }
+      const entry = ensure(att.student);
+      entry.attendancePoints += net;
+      entry.eventsAttended += 1;
     }
   }
+  return stats;
+}
 
-  for (const prog of state.roadmapProgress) {
-    const solvedCount = Array.isArray(prog.solvedProblems) ? prog.solvedProblems.length : 0;
-    if (solvedCount > 0) {
-      const u = state.users.find((item) => String(item.id) === String(prog.student));
-      if (u && u.role !== 'admin' && statsByUser.has(String(u.id))) {
-        statsByUser.get(String(u.id)).problemsSolved += solvedCount;
-      }
-    }
+function isHiddenFromLeaderboard(user) {
+  const privacy = user.profile?.privacy || {};
+  return privacy.leaderboardVisible === false || privacy.profileVisible === false;
+}
+
+function compareText(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+// Leaderboard rule: every non-admin member with a Codeforces handle is listed,
+// including with 0 points; members without a handle are not. Points are
+// CODEFORCES_POINTS_PER_PROBLEM per solved Codeforces problem (see
+// codeforcesScore.js). Order: points, solved count, events attended, name,
+// user id - so equal inputs always give the same order. Members with equal
+// points share a rank.
+function computeLeaderboard(state) {
+  const attendance = computeAttendanceStats(state);
+  const seen = new Set();
+  const entries = [];
+  for (const user of state.users) {
+    const userId = String(user.id || user._id);
+    if (seen.has(userId)) continue;
+    seen.add(userId);
+    if (user.role === 'admin' || userId === DEMO_USER_ID) continue;
+    const handle = userCodeforcesHandle(user);
+    if (!isValidCodeforcesHandle(handle) || isHiddenFromLeaderboard(user)) continue;
+    const stats = user.profile?.codeforces;
+    const statsMatchHandle =
+      isPlainObject(stats) && normalizeCodeforcesHandle(stats.handle) === normalizeCodeforcesHandle(handle);
+    const problemsSolved = solvedCountForHandle(stats, handle);
+    const { eventsAttended = 0, attendancePoints = 0 } = attendance.get(userId) || {};
+    entries.push({
+      userId,
+      name: typeof user.name === 'string' && user.name.trim() ? user.name : 'ICPC Member',
+      username: user.username || null,
+      codeforcesHandle: handle,
+      codeforcesSyncedAt: statsMatchHandle && typeof stats.syncedAt === 'string' ? stats.syncedAt : null,
+      points: leaderboardPoints({ solvedCount: problemsSolved, attendancePoints }),
+      attendancePoints,
+      eventsAttended,
+      problemsSolved,
+    });
   }
-
-  const entries = Array.from(statsByUser.values()).filter((e) => e.points > 0 || e.eventsAttended > 0);
   entries.sort((a, b) => {
     if (b.points !== a.points) return b.points - a.points;
+    if (b.problemsSolved !== a.problemsSolved) return b.problemsSolved - a.problemsSolved;
     if (b.eventsAttended !== a.eventsAttended) return b.eventsAttended - a.eventsAttended;
-    const nameCmp = String(a.name).localeCompare(String(b.name));
-    if (nameCmp !== 0) return nameCmp;
-    return String(a.userId).localeCompare(String(b.userId));
+    return (
+      compareText(a.name.toLowerCase(), b.name.toLowerCase()) ||
+      compareText(a.name, b.name) ||
+      compareText(a.userId, b.userId)
+    );
   });
 
   let currentRank = 0;
@@ -368,6 +629,231 @@ function computeLeaderboard(state) {
     }
     return { ...entry, rank: currentRank };
   });
+}
+
+// Standing of one member, whether or not they are listed on the leaderboard.
+function standingFor(state, user, leaderboard = computeLeaderboard(state)) {
+  const userId = String(user.id || user._id);
+  const listed = leaderboard.find((entry) => entry.userId === userId);
+  if (listed) return listed;
+  const { eventsAttended = 0, attendancePoints = 0 } = computeAttendanceStats(state).get(userId) || {};
+  return { rank: null, points: 0, problemsSolved: 0, eventsAttended, attendancePoints };
+}
+
+// ---------------------------------------------------------------------------
+// Codeforces sync
+// ---------------------------------------------------------------------------
+const CODEFORCES_MANUAL_REFRESH_MIN_INTERVAL_MS = 30 * 1000;
+const CODEFORCES_FAILED_ATTEMPT_BACKOFF_MS = 10 * 60 * 1000;
+
+let codeforcesFetcher = fetchCodeforcesSolved;
+const codeforcesSyncInFlight = new Map();
+const codeforcesFailedAttempts = new Map();
+
+// Tests replace the live Codeforces call with a fixture-backed function.
+export function setCodeforcesFetcherForTests(fetcher) {
+  codeforcesFetcher = fetcher || fetchCodeforcesSolved;
+  codeforcesSyncInFlight.clear();
+  codeforcesFailedAttempts.clear();
+}
+
+function codeforcesSummary(user) {
+  const handle = userCodeforcesHandle(user);
+  if (!handle) return null;
+  const stats = presentUser(user).profile.codeforces;
+  return {
+    handle,
+    solvedCount: stats ? stats.solvedCount : 0,
+    points: codeforcesPoints(stats ? stats.solvedCount : 0),
+    pointsPerProblem: CODEFORCES_POINTS_PER_PROBLEM,
+    syncedAt: stats?.syncedAt || null,
+    truncated: Boolean(stats?.truncated),
+  };
+}
+
+function codeforcesFailure(error, handle) {
+  const code = error instanceof CodeforcesError ? error.code : 'unavailable';
+  if (code === 'not_found' || code === 'invalid') {
+    return { code: 'not_found', message: `Codeforces has no user with the handle “${handle}”.` };
+  }
+  if (code === 'rate_limited') {
+    return { code, message: 'Codeforces is limiting requests right now.' };
+  }
+  return { code: 'unavailable', message: 'Codeforces could not be reached.' };
+}
+
+const SHARED_MESSAGES = {
+  disabled: 'Saved on this device only. The shared leaderboard is not switched on for this site yet, so other members cannot see this score.',
+  'not-signed-in-password': 'Saved on this device only. Email-and-password accounts are not connected to the shared leaderboard yet, so other members cannot see this score.',
+  'not-signed-in': 'Saved on this device only. Your Google or GitHub sign-in is no longer active in this browser. Sign out and sign in again so other members can see this score.',
+  'permission-denied': 'Saved on this device only. The shared leaderboard did not accept the update, so other members cannot see this score.',
+  offline: 'Saved on this device only for now. The shared leaderboard could not be reached. Use Refresh to try again.',
+  error: 'Saved on this device only for now. The shared leaderboard could not be updated. Use Refresh to try again.',
+};
+
+function sharedOutcome(user, reason) {
+  if (!reason) {
+    user.codeforcesShare = { ok: true };
+    return { ok: true, reason: null, message: '' };
+  }
+  user.codeforcesShare = { ok: false, reason };
+  const key = reason === 'not-signed-in' && user.passwordHash && !user.provider ? 'not-signed-in-password' : reason;
+  return { ok: false, reason, message: SHARED_MESSAGES[key] || SHARED_MESSAGES.error };
+}
+
+// Writes the member's own public record (and the reservation of their handle)
+// to Firestore and reports whether other browsers can now see it.
+async function shareUserRecord(state, user, { previousHandle = '' } = {}) {
+  let outcome;
+  if (!remote) {
+    outcome = sharedOutcome(user, 'disabled');
+  } else {
+    const uid = await currentRemoteUid();
+    if (uid !== String(user.id)) {
+      // users/{uid} is writable only by the Firebase Auth user with that uid.
+      outcome = sharedOutcome(user, 'not-signed-in');
+    } else {
+      const handle = normalizeCodeforcesHandle(userCodeforcesHandle(user));
+      if (handle) {
+        // firestore.rules lets a handle be put on users/{uid} only by the uid
+        // that holds codeforcesHandles/{handle}, so the reservation goes first.
+        await syncDocToFirestore('codeforcesHandles', handle, { uid, handle, updatedAt: user.updatedAt });
+      }
+      const result = await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+      const previous = normalizeCodeforcesHandle(previousHandle);
+      if (result.ok && previous && previous !== handle) {
+        await deleteDocFromFirestore('codeforcesHandles', previous);
+      }
+      outcome = sharedOutcome(user, result.ok ? null : result.reason);
+    }
+  }
+  saveState(state);
+  return outcome;
+}
+
+// Used by every other place that updates the member's public record.
+function syncUserDoc(state, user) {
+  return shareUserRecord(state, user);
+}
+
+// Who holds this handle in Firestore, if that can be read at all.
+async function remoteHandleOwner(normalizedHandle) {
+  if (!remote) return null;
+  try {
+    const reservation = await withTimeout(Promise.resolve(remote.read('codeforcesHandles', normalizedHandle)), 5000);
+    return reservation && typeof reservation.uid === 'string' ? reservation.uid : null;
+  } catch {
+    return null;
+  }
+}
+
+function assertHandleFreeLocally(state, user, normalizedHandle) {
+  const taken = state.users.some(
+    (u) => String(u.id || u._id) !== String(user.id) && normalizeCodeforcesHandle(userCodeforcesHandle(u)) === normalizedHandle,
+  );
+  if (taken) {
+    throw createError('This Codeforces handle is already linked to another member.', 409, { field: 'codeforcesHandle' });
+  }
+}
+
+function applyCodeforcesHandle(user, handle) {
+  user.profile = {
+    ...(user.profile || {}),
+    links: {
+      ...(user.profile?.links || {}),
+      codeforcesHandle: handle,
+      codeforcesUrl: handle ? `https://codeforces.com/profile/${encodeURIComponent(handle)}` : '',
+    },
+    codeforcesVerification: {
+      status: 'unverified',
+      handle,
+      normalizedHandle: normalizeCodeforcesHandle(handle),
+      selfReported: Boolean(handle),
+      verifiedAt: null,
+    },
+  };
+}
+
+function applyCodeforcesResult(user, result, nowIso) {
+  user.profile = {
+    ...(user.profile || {}),
+    codeforces: {
+      handle: userCodeforcesHandle(user),
+      solvedCount: sanitizeSolvedCount(result.solvedCount),
+      syncedAt: nowIso,
+      truncated: result.truncated === true,
+    },
+  };
+}
+
+// Refreshes the stored solved count of the member's current handle.
+//   force=false: only when the stored count is missing or older than the refresh interval.
+//   force=true:  the manual Refresh control.
+// On any Codeforces failure the stored count is left exactly as it was.
+async function refreshCodeforcesStats(state, user, { force = false } = {}) {
+  const userId = String(user.id);
+  const handle = userCodeforcesHandle(user);
+  if (!handle) {
+    return { sync: { attempted: false, ok: true, reason: 'no-handle', message: '' }, shared: null };
+  }
+  const stats = presentUser(user).profile.codeforces;
+  const now = Date.now();
+  const lastSuccessMs = stats?.syncedAt ? Date.parse(stats.syncedAt) : Number.NaN;
+  const reshareIfNeeded = async () => {
+    if (remote && user.codeforcesShare && user.codeforcesShare.ok === false) return shareUserRecord(state, user);
+    return user.codeforcesShare?.ok === false ? sharedOutcome(user, user.codeforcesShare.reason) : null;
+  };
+  if (force && Number.isFinite(lastSuccessMs) && now - lastSuccessMs < CODEFORCES_MANUAL_REFRESH_MIN_INTERVAL_MS) {
+    return {
+      sync: { attempted: false, ok: true, reason: 'fresh', message: 'Your Codeforces count was refreshed moments ago.' },
+      shared: await reshareIfNeeded(),
+    };
+  }
+  if (!force) {
+    if (stats && !isCodeforcesSyncStale(stats.syncedAt, now)) {
+      return { sync: { attempted: false, ok: true, reason: 'fresh', message: '' }, shared: await reshareIfNeeded() };
+    }
+    const failed = codeforcesFailedAttempts.get(userId);
+    if (failed && failed.handle === handle && now - failed.at < CODEFORCES_FAILED_ATTEMPT_BACKOFF_MS) {
+      return { sync: { attempted: false, ok: false, reason: failed.code, message: failed.message }, shared: null };
+    }
+  }
+  if (codeforcesSyncInFlight.has(userId)) return codeforcesSyncInFlight.get(userId);
+
+  const run = (async () => {
+    let result;
+    try {
+      result = await codeforcesFetcher(handle);
+    } catch (error) {
+      const failure = codeforcesFailure(error, handle);
+      const kept = stats
+        ? ` Showing your last synced count (${stats.solvedCount}).`
+        : ' Your score will appear after the next successful sync.';
+      const message =
+        failure.code === 'not_found'
+          ? `${failure.message} Check the handle in Codeforces settings.${stats ? kept : ''}`
+          : `${failure.message}${kept}`;
+      codeforcesFailedAttempts.set(userId, { at: Date.now(), handle, code: failure.code, message });
+      return { sync: { attempted: true, ok: false, reason: failure.code, message }, shared: null };
+    }
+    codeforcesFailedAttempts.delete(userId);
+    // The handle may have been changed while the request was in flight.
+    if (userCodeforcesHandle(user) !== handle) {
+      return { sync: { attempted: true, ok: false, reason: 'handle-changed', message: '' }, shared: null };
+    }
+    const nowIso = new Date().toISOString();
+    applyCodeforcesResult(user, result, nowIso);
+    user.updatedAt = nowIso;
+    saveState(state);
+    const shared = await shareUserRecord(state, user);
+    return { sync: { attempted: true, ok: true, reason: null, message: '' }, shared };
+  })();
+  codeforcesSyncInFlight.set(userId, run);
+  try {
+    return await run;
+  } finally {
+    codeforcesSyncInFlight.delete(userId);
+  }
 }
 
 function generateScheduleSessions(cycle) {
@@ -399,10 +885,10 @@ function generateScheduleSessions(cycle) {
 }
 
 export async function handleSparkRequest(rawPath, options = {}) {
-  await hydrateFromFirestoreOnce();
+  const token = options.token || null;
+  await hydrateFromFirestore(token);
   const state = loadState();
   const method = String(options.method || 'GET').toUpperCase();
-  const token = options.token || null;
   const body = options.body
     ? typeof options.body === 'string'
       ? JSON.parse(options.body)
@@ -424,6 +910,22 @@ export async function handleSparkRequest(rawPath, options = {}) {
     if (!email) throw createError('OAuth sign-in did not provide a valid email address.', 400);
     let user = state.users.find((u) => u.email === email);
     const now = new Date().toISOString();
+    if (!user && body.uid) {
+      // This member already has a public record (read back from Firestore, written
+      // from another browser). Adopt it instead of creating a blank account over it,
+      // which would wipe their profile, handle and score for everyone.
+      const existing = state.users.find((u) => String(u._id || u.id) === String(body.uid) && !u.email);
+      if (existing) {
+        delete existing.remoteOnly;
+        existing.email = email;
+        existing.provider = body.provider || (pathname.includes('github') ? 'github' : 'google');
+        existing.studentId = existing.studentId || null;
+        existing.notificationPreferences = existing.notificationPreferences || { contestAnnouncements: true, icpcEvents: true };
+        existing.role = ADMIN_EMAILS.has(email) ? 'admin' : 'user';
+        user = existing;
+        saveState(state);
+      }
+    }
     if (!user) {
       const id = body.uid || `usr_${randomHex(8)}`;
       const isAdminEmail = ADMIN_EMAILS.has(email);
@@ -447,7 +949,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
       };
       state.users.push(user);
       saveState(state);
-      await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+      await syncUserDoc(state, user);
       await syncDocToFirestore('userSecrets', user.id, { email: user.email, studentId: user.studentId });
     } else if (ADMIN_EMAILS.has(email) && user.role !== 'admin') {
       user.role = 'admin';
@@ -506,7 +1008,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
     };
     state.users.push(user);
     saveState(state);
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    await syncUserDoc(state, user);
     await syncDocToFirestore('userSecrets', user.id, { email: user.email, studentId: user.studentId });
     await syncDocToFirestore('usernames', username, { uid: user.id, createdAt: now });
     if (studentId) {
@@ -551,7 +1053,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
       await deleteDocFromFirestore('usernames', previousUsername);
     }
     await syncDocToFirestore('usernames', username, { uid: user.id, createdAt: user.updatedAt });
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    await syncUserDoc(state, user);
     return { user: presentUser(user) };
   }
 
@@ -601,9 +1103,15 @@ export async function handleSparkRequest(rawPath, options = {}) {
   if (pathname === '/auth/profile' && method === 'PUT') {
     const user = getCurrentUser(state, token);
     const nextProfile = { ...(user.profile || {}), ...body };
+    // The synced Codeforces result is written only by the sync itself.
+    delete nextProfile.codeforces;
+    if (user.profile?.codeforces) nextProfile.codeforces = user.profile.codeforces;
     const cfHandle = String(nextProfile.links?.codeforcesHandle || user.profile?.links?.codeforcesHandle || '').trim();
     if (cfHandle && !/^[A-Za-z0-9._-]{3,24}$/.test(cfHandle)) {
       throw createError('Enter a valid Codeforces handle (3–24 characters).', 400, { field: 'codeforcesHandle' });
+    }
+    if (cfHandle && normalizeCodeforcesHandle(cfHandle) !== normalizeCodeforcesHandle(userCodeforcesHandle(user))) {
+      assertHandleFreeLocally(state, user, normalizeCodeforcesHandle(cfHandle));
     }
     user.profile = {
       ...nextProfile,
@@ -623,7 +1131,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
     };
     user.updatedAt = new Date().toISOString();
     saveState(state);
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    await syncUserDoc(state, user);
     return { user: presentUser(user) };
   }
 
@@ -636,7 +1144,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
     };
     user.updatedAt = new Date().toISOString();
     saveState(state);
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    await syncUserDoc(state, user);
     return { user: presentUser(user) };
   }
 
@@ -649,69 +1157,115 @@ export async function handleSparkRequest(rawPath, options = {}) {
     };
     user.updatedAt = new Date().toISOString();
     saveState(state);
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    await syncUserDoc(state, user);
     return { user: presentUser(user) };
   }
 
-  // 11. Codeforces Self-Reported Handle (Unverified Handle Mode per Decision D3)
+  // 11. Codeforces handle (self-reported, not ownership-verified) and solved-count sync
   if (pathname === '/auth/codeforces-verification' && method === 'GET') {
     const user = getCurrentUser(state, token);
     const presented = presentUser(user);
-    return { verification: presented.profile.codeforcesVerification };
+    return {
+      verification: presented.profile.codeforcesVerification,
+      codeforces: codeforcesSummary(user),
+      shared: user.codeforcesShare?.ok === false ? sharedOutcome(user, user.codeforcesShare.reason) : null,
+    };
   }
 
+  // Save (or re-save) the handle. The handle must exist on Codeforces: it is
+  // looked up there before anything is stored.
   if ((pathname === '/auth/codeforces-verification/generate' || pathname === '/auth/codeforces-verification/check') && method === 'POST') {
     const user = getCurrentUser(state, token);
-    const handle = String(body.handle || user.profile?.links?.codeforcesHandle || '').trim();
-    if (!/^[A-Za-z0-9._-]{3,24}$/.test(handle)) {
-      throw createError('Enter a valid Codeforces handle (3–24 characters).', 400);
+    const previousHandle = userCodeforcesHandle(user);
+    const handle = String(body.handle || previousHandle || '').trim();
+    if (!isValidCodeforcesHandle(handle)) {
+      throw createError('Enter a valid Codeforces handle (3–24 characters).', 400, { field: 'codeforcesHandle' });
     }
-    const normalized = handle.toLowerCase();
-    if (
-      state.users.some(
-        (u) =>
-          u.id !== user.id &&
-          (u.profile?.links?.codeforcesHandle || '').toLowerCase() === normalized,
-      )
-    ) {
-      throw createError('This Codeforces handle is already linked to another member.', 409);
+    const normalized = normalizeCodeforcesHandle(handle);
+    const changed = normalized !== normalizeCodeforcesHandle(previousHandle);
+    assertHandleFreeLocally(state, user, normalized);
+    if (changed) {
+      const owner = await remoteHandleOwner(normalized);
+      if (owner && owner !== String(user.id)) {
+        throw createError('This Codeforces handle is already linked to another member.', 409, { field: 'codeforcesHandle' });
+      }
     }
-    const verification = {
-      status: 'unverified',
-      handle,
-      normalizedHandle: normalized,
-      selfReported: true,
-      verifiedAt: null,
-    };
-    user.profile = {
-      ...(user.profile || {}),
-      links: {
-        ...(user.profile?.links || {}),
-        codeforcesHandle: handle,
-        codeforcesUrl: `https://codeforces.com/profile/${encodeURIComponent(handle)}`,
-      },
-      codeforcesVerification: verification,
-    };
-    user.updatedAt = new Date().toISOString();
+
+    if (!changed) {
+      // Same handle again: this is a refresh. A Codeforces outage keeps the stored count.
+      const { sync, shared } = await refreshCodeforcesStats(state, user, { force: true });
+      if (sync.reason === 'not_found' && !presentUser(user).profile.codeforces) {
+        throw createError(`Codeforces has no user with the handle “${handle}”. Check the spelling and try again.`, 404, { field: 'codeforcesHandle' });
+      }
+      const summary = codeforcesSummary(user);
+      return {
+        verification: presentUser(user).profile.codeforcesVerification,
+        user: presentUser(user),
+        token: null,
+        codeforces: summary,
+        sync,
+        shared,
+        message: sync.ok
+          ? `Handle @${summary.handle} is linked. ${summary.solvedCount} solved on Codeforces = ${summary.points} points.`
+          : '',
+      };
+    }
+
+    let result;
+    try {
+      result = await codeforcesFetcher(handle);
+    } catch (error) {
+      const failure = codeforcesFailure(error, handle);
+      if (failure.code === 'not_found') {
+        throw createError(`${failure.message} Check the spelling and try again.`, 404, { field: 'codeforcesHandle' });
+      }
+      throw createError(
+        `${failure.message} The handle could not be checked, so it was not saved${previousHandle ? ' and your current handle and score are unchanged' : ''}. Try again in a minute.`,
+        503,
+        { field: 'codeforcesHandle' },
+      );
+    }
+    const nowIso = new Date().toISOString();
+    // Store Codeforces' own spelling of the handle. Replacing the handle also
+    // replaces the stored count, so the old handle's count cannot linger.
+    applyCodeforcesHandle(user, isValidCodeforcesHandle(result.handle) && normalizeCodeforcesHandle(result.handle) === normalized ? result.handle : handle);
+    applyCodeforcesResult(user, result, nowIso);
+    user.updatedAt = nowIso;
+    codeforcesFailedAttempts.delete(String(user.id));
     saveState(state);
-    await syncDocToFirestore('users', user.id, presentUser(user, { includePrivate: false }));
+    const shared = await shareUserRecord(state, user, { previousHandle });
+    const summary = codeforcesSummary(user);
     return {
-      verification,
+      verification: presentUser(user).profile.codeforcesVerification,
       user: presentUser(user),
       token: null,
-      message: `Handle @${handle} saved as an unverified self-reported handle.`,
+      codeforces: summary,
+      sync: { attempted: true, ok: true, reason: null, message: '' },
+      shared,
+      message: `Handle @${summary.handle} saved. ${summary.solvedCount} solved on Codeforces = ${summary.points} points.`,
+    };
+  }
+
+  // Refresh the stored solved count. { force: true } is the manual Refresh
+  // control; without it the count is refreshed only when it is stale.
+  if (pathname === '/auth/codeforces/sync' && method === 'POST') {
+    const user = getCurrentUser(state, token);
+    const before = presentUser(user).profile.codeforces;
+    const { sync, shared } = await refreshCodeforcesStats(state, user, { force: body.force === true });
+    const after = presentUser(user).profile.codeforces;
+    return {
+      codeforces: codeforcesSummary(user),
+      user: presentUser(user),
+      sync,
+      shared,
+      changed: (before?.solvedCount ?? null) !== (after?.solvedCount ?? null) || (before?.syncedAt ?? null) !== (after?.syncedAt ?? null),
     };
   }
 
   // 12. Student Dashboard
   if (pathname === '/dashboard' && method === 'GET') {
     const user = getCurrentUser(state, token);
-    const lb = computeLeaderboard(state);
-    const myEntry = lb.find((e) => e.userId === String(user.id)) || {
-      rank: null,
-      points: 0,
-      eventsAttended: 0,
-    };
+    const myEntry = standingFor(state, user);
     const myRegs = state.registrations.filter((r) => String(r.user) === String(user.id));
     const recentAttendance = myRegs
       .filter((r) => r.checkedInAt)
@@ -756,9 +1310,17 @@ export async function handleSparkRequest(rawPath, options = {}) {
       dashboard: {
         stats: {
           points: myEntry.points,
+          rank: myEntry.rank,
+          problemsSolved: myEntry.problemsSolved,
+          attendancePoints: myEntry.attendancePoints,
           eventsAttended: myEntry.eventsAttended,
           registeredEvents: myRegs.length,
           trainingCycles: cycles.length,
+        },
+        codeforces: codeforcesSummary(user),
+        scoring: {
+          pointsPerProblem: CODEFORCES_POINTS_PER_PROBLEM,
+          attendanceCountsTowardTotal: LEADERBOARD_INCLUDES_ATTENDANCE_POINTS,
         },
         recentAttendance,
         cycles,
@@ -835,17 +1397,19 @@ export async function handleSparkRequest(rawPath, options = {}) {
   }
 
   if (pathname === '/events/leaderboard' && method === 'GET') {
-    return { leaderboard: computeLeaderboard(state).slice(0, 100) };
+    await refreshRemoteUsers();
+    return {
+      leaderboard: computeLeaderboard(state).slice(0, 100),
+      scoring: {
+        pointsPerProblem: CODEFORCES_POINTS_PER_PROBLEM,
+        attendanceCountsTowardTotal: LEADERBOARD_INCLUDES_ATTENDANCE_POINTS,
+      },
+    };
   }
 
   if (pathname === '/events/leaderboard/me' && method === 'GET') {
     const user = getCurrentUser(state, token);
-    const lb = computeLeaderboard(state);
-    const standing = lb.find((e) => e.userId === String(user.id)) || {
-      rank: null,
-      points: 0,
-      eventsAttended: 0,
-    };
+    const standing = standingFor(state, user);
     const attendanceHistory = state.registrations
       .filter((r) => String(r.user) === String(user.id) && r.checkedInAt)
       .map((r) => {
@@ -887,12 +1451,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
     if (presented.profile.privacy?.profileVisibility === 'private') {
       throw createError('Member profile not found.', 404);
     }
-    const lb = computeLeaderboard(state);
-    const standing = lb.find((e) => e.userId === String(targetUser.id)) || {
-      rank: null,
-      points: 0,
-      eventsAttended: 0,
-    };
+    const standing = standingFor(state, targetUser);
     const attendanceHistory = state.registrations
       .filter((r) => String(r.user) === String(targetUser.id) && r.checkedInAt)
       .map((r) => {

@@ -79,7 +79,7 @@ export default function App() {
         <Route path="/settings" element={<RequireUsername session={session}><Navigate to="/settings/account" replace /></RequireUsername>} />
         <Route path="/settings/:section" element={<RequireUsername session={session}><SettingsPage session={session} theme={theme} onThemeChange={setTheme} /></RequireUsername>} />
         <Route path="/resources" element={<Navigate to="/" replace />} />
-        <Route path="/leaderboard" element={<LeaderboardPage />} />
+        <Route path="/leaderboard" element={<LeaderboardPage session={session} />} />
         <Route path="/users/:username" element={<UserProfilePage session={session} />} />
         <Route path="/admin" element={<RequireUsername session={session}>{session.user?.role === 'admin' ? <AdminDashboardLayout activeSection="events"><Admin token={session.token} /></AdminDashboardLayout> : <Navigate to="/login" replace />}</RequireUsername>} />
         <Route path="/admin/overview" element={<RequireUsername session={session}>{session.user?.role === 'admin' ? <AdminDashboardLayout activeSection="overview"><AdminOverviewPage token={session.token} /></AdminDashboardLayout> : <Navigate to="/login" replace />}</RequireUsername>} />

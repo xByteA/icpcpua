@@ -12,6 +12,12 @@ rules_version = '2';
 //    - Fields: uid, fullName, username, role ('user' | 'admin'),
 //      attendancePoints, avatar, bio, faculty, academicYear,
 //      codeforcesHandle, githubUrl, linkedinUrl, createdAt, updatedAt.
+//    - profile.links.codeforcesHandle: self-reported Codeforces handle (ownership
+//      is NOT verified).
+//    - profile.codeforces: { handle, solvedCount, syncedAt, truncated } written by
+//      the member's own browser after reading the Codeforces API. There is no
+//      server, so this number is client-reported: the rules below only bound its
+//      shape (integer 0..50000); they cannot prove it is genuine.
 //
 // 3. Collection: userSecrets/{uid}
 //    - Private account settings (email, studentId, phone).
@@ -19,6 +25,10 @@ rules_version = '2';
 //
 // 4. Collection: usernames/{username}
 //    - Deterministic uniqueness lock mapping lowercase username -> { uid }.
+//
+// 4b. Collection: codeforcesHandles/{lowercase handle}
+//    - Uniqueness lock mapping a lowercase Codeforces handle -> { uid }.
+//    - A handle can be put on users/{uid} only by the uid holding this lock.
 //
 // 5. Collection: studentIds/{studentId}
 //    - Deterministic uniqueness lock mapping studentId (4-20 digits) -> { uid }.
@@ -85,6 +95,44 @@ service cloud.firestore {
       );
     }
 
+    // --- Codeforces fields on users/{uid} ---------------------------
+
+    function codeforcesHandleOf(data) {
+      return data.get('profile', {}).get('links', {}).get('codeforcesHandle', '');
+    }
+
+    // Shape and bounds only. The count is reported by the member's own browser
+    // and can be forged; nothing here verifies it against Codeforces.
+    function codeforcesStatsValid(data) {
+      let stats = data.get('profile', {}).get('codeforces', null);
+      return stats == null || (
+        stats is map
+        && stats.keys().hasOnly(['handle', 'solvedCount', 'syncedAt', 'truncated'])
+        && stats.get('solvedCount', 0) is int
+        && stats.get('solvedCount', 0) >= 0
+        && stats.get('solvedCount', 0) <= 50000
+        && stats.get('handle', '') is string
+        && stats.get('handle', '').matches('^[A-Za-z0-9._-]{0,24}$')
+        && stats.get('syncedAt', '') is string
+        && stats.get('syncedAt', '').size() <= 40
+        && stats.get('truncated', false) is bool
+      );
+    }
+
+    // One Codeforces handle per account: a new or changed handle must be backed
+    // by the member's own lock document in codeforcesHandles. An unchanged handle
+    // (including handles saved before this rule existed) is left alone.
+    function codeforcesHandleClaimed(uid, newData, oldData) {
+      let handle = codeforcesHandleOf(newData);
+      return handle == ''
+        || (handle is string
+          && handle.matches('^[A-Za-z0-9._-]{3,24}$')
+          && (
+            (oldData != null && handle.lower() == codeforcesHandleOf(oldData).lower())
+            || getAfter(/databases/$(database)/documents/codeforcesHandles/$(handle.lower())).data.uid == uid
+          ));
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -98,12 +146,16 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isOwner(uid)
         && (!('role' in request.resource.data) || request.resource.data.role == 'user' || isAdmin())
-        && (!('attendancePoints' in request.resource.data) || request.resource.data.attendancePoints == 0);
+        && (!('attendancePoints' in request.resource.data) || request.resource.data.attendancePoints == 0)
+        && codeforcesStatsValid(request.resource.data)
+        && codeforcesHandleClaimed(uid, request.resource.data, null);
       allow update: if isAdmin() || (
         isOwner(uid) && (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) ||
           request.resource.data.role == resource.data.role
         )
+        && codeforcesStatsValid(request.resource.data)
+        && codeforcesHandleClaimed(uid, request.resource.data, resource.data)
       );
       allow delete: if isAdmin();
     }
@@ -116,6 +168,17 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    match /codeforcesHandles/{handle} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9._-]{3,24}$');
+      allow update: if isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
     }
 
     match /studentIds/{studentId} {

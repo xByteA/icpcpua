@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleSparkRequest, resetSparkStoreForTests } from '../src/shared/services/sparkAdapter.js';
+import { handleSparkRequest, resetSparkStoreForTests, setCodeforcesFetcherForTests } from '../src/shared/services/sparkAdapter.js';
 
 const storage = new Map();
 globalThis.localStorage = {
@@ -12,6 +12,9 @@ globalThis.localStorage = {
 
 test('Spark Adapter Contract Tests — Full 31-Route Coverage', async t => {
   resetSparkStoreForTests();
+  // No live Codeforces calls in tests: every handle resolves to 3 solved problems.
+  setCodeforcesFetcherForTests(async handle => ({ handle, solvedCount: 3, submissionsScanned: 5, truncated: false }));
+  t.after(() => setCodeforcesFetcherForTests(null));
 
   const ROADMAP_SLUG = 'level-0-37e4fa';
 
@@ -116,10 +119,12 @@ test('Spark Adapter Contract Tests — Full 31-Route Coverage', async t => {
     });
     assert.equal(cfRes.verification.handle, 'tourist_pua');
     assert.equal(cfRes.verification.status, 'unverified');
+    assert.equal(cfRes.codeforces.solvedCount, 3);
 
     const dashRes = await handleSparkRequest('/dashboard', { token: studentToken });
     assert.ok(dashRes.dashboard);
-    assert.equal(typeof dashRes.dashboard.stats.points, 'number');
+    assert.equal(dashRes.dashboard.stats.points, 60);
+    assert.equal(dashRes.dashboard.stats.problemsSolved, 3);
   });
 
   await t.test('5. Admin OAuth/login, Event creation, QR generation, Student registration, Check-in, Double Check-in rejection, and Leaderboard', async () => {
@@ -191,11 +196,15 @@ test('Spark Adapter Contract Tests — Full 31-Route Coverage', async t => {
       err => err.status === 409,
     );
 
-    // Leaderboard reflects awarded points
+    // Leaderboard total is Codeforces only (20 x 3 solved); the 25 attendance
+    // points are still recorded and the check-in still counts in the Events column.
     const { leaderboard } = await handleSparkRequest('/events/leaderboard');
     const rankedStudent = leaderboard.find(row => row.username === 'youssef_icpc');
-    assert.ok(rankedStudent, 'Checked-in student must appear on the leaderboard');
-    assert.equal(rankedStudent.points, 25);
+    assert.ok(rankedStudent, 'Student with a Codeforces handle must appear on the leaderboard');
+    assert.equal(rankedStudent.points, 60);
+    assert.equal(rankedStudent.problemsSolved, 3);
+    assert.equal(rankedStudent.eventsAttended, 1);
+    assert.equal(rankedStudent.attendancePoints, 25);
   });
 
   await t.test('6. Roadmap Topic DAG progress & Training Cycle enrollment', async () => {
