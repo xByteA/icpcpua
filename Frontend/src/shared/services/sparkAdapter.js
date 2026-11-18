@@ -1595,7 +1595,8 @@ export async function handleSparkRequest(rawPath, options = {}) {
       if (!cycle) throw createError('Cycle not found.', 404);
 
       if (!sub && method === 'PUT') {
-        assertCycleRoadmapPublished(state, { ...cycle, ...body });
+        // Only a transition into published is checked, so a live cycle stays editable after its roadmap is completed.
+        if (cycle.status !== 'published') assertCycleRoadmapPublished(state, { ...cycle, ...body });
         Object.assign(cycle, body, { updatedAt: new Date().toISOString() });
         saveState(state);
         await syncDocToFirestore('roadmapCycles', cycle.id, cycle);

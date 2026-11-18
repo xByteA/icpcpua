@@ -13,6 +13,11 @@ test('safeRedirectPath accepts same-site paths', () => {
 test('safeRedirectPath rejects other origins and schemes', () => {
   for (const value of [
     '//evil.com',
+    '/.//evil.com',
+    '/..//evil.com',
+    '/%2e//evil.com',
+    '/%2E%2E//evil.com',
+    '/a/..//evil.com',
     '//evil.com/path?x=1',
     'https://evil.com',
     'http://evil.com/login',

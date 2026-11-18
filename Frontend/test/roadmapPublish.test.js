@@ -332,9 +332,12 @@ test('J. a cycle cannot be published while its roadmap is not published', async 
   const second = await admin(`/admin/roadmaps/${draft._id}/cycles`, 'POST', cycleBody({ order: 2, status: 'published' }));
   assert.equal(second.cycle.status, 'published');
 
-  // Once the roadmap is completed, a published cycle can still be closed out but not re-saved as published.
+  // Once the roadmap is completed, an already-published cycle stays editable, but a closed one cannot be re-published.
   await admin(`/admin/roadmaps/${draft._id}`, 'PUT', { status: 'completed' });
-  await assert.rejects(() => admin(`/admin/roadmap-cycles/${cycle._id}`, 'PUT', { status: 'published' }), notPublished);
+  const resaved = await admin(`/admin/roadmap-cycles/${cycle._id}`, 'PUT', { status: 'published', capacity: 45 });
+  assert.equal(resaved.cycle.capacity, 45);
+  assert.equal(resaved.cycle.status, 'published');
   const closed = await admin(`/admin/roadmap-cycles/${cycle._id}`, 'PUT', { status: 'completed' });
   assert.equal(closed.cycle.status, 'completed');
+  await assert.rejects(() => admin(`/admin/roadmap-cycles/${cycle._id}`, 'PUT', { status: 'published' }), notPublished);
 });

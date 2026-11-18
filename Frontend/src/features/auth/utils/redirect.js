@@ -9,6 +9,8 @@ export function safeRedirectPath(value) {
   try {
     const url = new URL(value, PROBE_ORIGIN);
     if (url.origin !== PROBE_ORIGIN) return null;
+    // Dot segments ("/.//host") normalise to "//host", so check again after parsing.
+    if (url.pathname.startsWith('//')) return null;
     return `${url.pathname}${url.search}${url.hash}`;
   } catch {
     return null;
