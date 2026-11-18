@@ -459,7 +459,7 @@ test('Sharing through Firestore (fake remote enforcing the rules)', async t => {
     assert.equal(remote.get('users', 'uid_google').profile.codeforces.solvedCount, 2);
   });
 
-  await t.test('email-and-password member: saved locally, told plainly it is not shared, later writes still work', async () => {
+  await t.test('no Firebase Auth user in this browser: saved locally, told plainly it is not shared, later writes still work', async () => {
     const remote = createFakeRemote({ uid: null });
     freshStoreWithRemote(remote);
     cfAccount('password_cf', 6);
@@ -468,7 +468,8 @@ test('Sharing through Firestore (fake remote enforcing the rules)', async t => {
     assert.equal(saved.codeforces.solvedCount, 6);
     assert.equal(saved.shared.ok, false);
     assert.equal(saved.shared.reason, 'not-signed-in');
-    assert.match(saved.shared.message, /Email-and-password accounts are not connected/);
+    assert.match(saved.shared.message, /Saved on this device only\. Your sign-in is no longer active in this browser/);
+    assert.doesNotMatch(saved.shared.message, /Email-and-password/);
     assert.equal(remote.get('users', student.user.id), null);
     assert.equal((await leaderboard())[0].points, 120, 'still listed in this browser');
 

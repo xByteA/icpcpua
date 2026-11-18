@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/firestoreRules.test.js test/sparkAdapter.test.js test/roadmapPublish.test.js test/authRedirect.test.js test/codeforcesScore.test.js test/codeforcesLeaderboard.test.js"
+    "test": "node --test test/firestoreRules.test.js test/sparkAdapter.test.js test/roadmapPublish.test.js test/authRedirect.test.js test/codeforcesScore.test.js test/codeforcesLeaderboard.test.js test/emailPasswordAuth.test.js",
+    "test:emulators": "cd .. && npx firebase-tools emulators:exec --only auth,firestore --project demo-icpc-pua \"node --test Frontend/test/emulator/emailPasswordAuth.emulator.test.mjs\""
   },
   "dependencies": {
     "firebase": "^13.1.0",

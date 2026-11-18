@@ -38,8 +38,55 @@ VITE_ADMIN_EMAILS=enjoyplayax@gmail.com
 
 `VITE_FIRESTORE_ENABLED=true` (not set by default) turns on sharing through Firestore. Without it every
 browser keeps its own data and the leaderboard shows only accounts created in that browser. Deploy
-`firestore.rules` before setting it. Only Google/GitHub accounts can write to Firestore; email-and-password
-accounts are local to the browser they were created in.
+`firestore.rules` before setting it.
+
+### Email-and-password accounts (Firebase Authentication)
+
+With `VITE_FIRESTORE_ENABLED=true`, email-and-password sign-up and login go through Firebase Authentication,
+the same as Google and GitHub. The account id is the Firebase uid, the member's record is shared through
+Firestore, and the password is held by Firebase only (no hash is kept in the browser). With the flag off,
+email-and-password accounts stay in the browser they were created in, as before.
+
+**Before turning the flag on (or before deploying this change if the flag is already on):**
+
+1. Firebase console → Authentication → Sign-in method → enable **Email/Password**. Leave "Email link
+   (passwordless sign-in)" off. Until this is done, sign-up with email shows "Email sign-in is not available
+   right now", and existing email accounts keep working in their own browser only.
+2. Firebase console → Authentication → Settings → User account linking: keep **Link accounts that use the
+   same email** (the default). The app relies on one account per email.
+3. Sign in to the live site once with Google as `enjoyplayax@gmail.com`, so that email is already taken in
+   Firebase Authentication and nobody can sign up with it using a password.
+4. Deploy the rules: `npx firebase-tools deploy --only firestore:rules`. `isAdmin()` now needs the owner email
+   to be verified by the sign-in provider (Google does this). Any other admin (an email in `VITE_ADMIN_EMAILS`,
+   or an admin who signs in with GitHub or with a password) needs an `admins/{uid}` document to be an admin
+   in Firestore; without it they see the admin pages but their changes stay in their own browser.
+
+**What existing members see:** an email-and-password member who was signed in is asked to log in once more.
+Logging in with the same email and password creates their Firebase account and moves everything they had in
+that browser (profile, username, student ID, Codeforces handle, registrations, training enrolments, progress,
+attendance) onto it. Nothing else is asked of them.
+
+**Rules the move follows:**
+
+- The email is not registered in Firebase yet: the account in the browser is moved as it is.
+- The email is already registered (the member used Google or GitHub with it, or signed up on another device):
+  the record already shared through Firestore is kept and is never overwritten from the browser. The
+  member's registrations, enrolments, progress and attendance from the browser are added to it when they
+  proved both accounts are theirs: the same password opens both, or they sign in with Google/GitHub using
+  that email. If the passwords differ, the two accounts are left separate and the browser's data stays in
+  that browser.
+- Password login is refused with "This email already has an account that signs in with Google, GitHub or a
+  different password" when the browser's password does not open the Firebase account.
+- The demo account (`demo@pua.edu.eg`) is never moved.
+
+**Do not turn `VITE_FIRESTORE_ENABLED` off again after members have moved.** A moved account has no password
+hash in the browser, so with the flag off it could not log in with email and password (Google and GitHub
+sign-in are not affected).
+
+**Local testing without touching the real project:** set `VITE_FIREBASE_EMULATORS=true`,
+`VITE_FIRESTORE_ENABLED=true` and `VITE_FIREBASE_PROJECT_ID=demo-icpc-pua` in `Frontend/.env.local`, then run
+`npx firebase-tools emulators:start --only auth,firestore --project demo-icpc-pua` next to `npm run dev`.
+`npm run test:emulators --prefix Frontend` runs the adapter end to end against the emulators (needs Java 21).
 
 ---
 
