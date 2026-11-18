@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { QrCode, Users, X } from "lucide-react";
 import { api, eventDate } from "../../../shared/services/api.js";
 import { safeExternalUrl } from '../../../shared/utils/externalUrl.js';
@@ -37,6 +37,7 @@ function EventForm({
     status: 'draft'
   });
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const update = (key, value) => setForm(current => ({
     ...current,
@@ -46,6 +47,7 @@ function EventForm({
     e.preventDefault();
     setBusy(true);
     setError('');
+    setMessage('');
     const body = {
       ...form,
       capacity: form.capacity === '' ? null : Number(form.capacity),
@@ -53,12 +55,13 @@ function EventForm({
       attendancePoints: Number(form.attendancePoints)
     };
     try {
-      await api(event ? `/admin/events/${event.id}` : '/admin/events', {
+      const result = await api(event ? `/admin/events/${event.id}` : '/admin/events', {
         method: event ? 'PUT' : 'POST',
         token,
         body: JSON.stringify(body)
       });
-      onSaved();
+      setMessage(event ? 'Event changes saved.' : 'Event created.');
+      onSaved(result?.event);
     } catch (reason) {
       setError(reason.message);
     } finally {
@@ -81,7 +84,8 @@ function EventForm({
       <label>Status<select value={form.status} onChange={e => update('status', e.target.value)}><option value="draft">Draft</option><option value="published">Published</option><option value="cancelled">Cancelled</option></select></label>
       <label className="span-two">Description<textarea required rows="4" value={form.description} onChange={e => update('description', e.target.value)} /></label>
     </div>
-    {error && <div className="notice error-notice">{error}</div>}
+    {error && <div className="notice error-notice" role="alert">{error}</div>}
+    {message && <div className="notice success-notice" role="status">{message}</div>}
     <div className="form-actions"><button className="button button-dark" disabled={busy}>{busy ? 'Saving...' : event ? 'Save changes' : 'Create event'}</button><button type="button" className="button button-outline" onClick={onCancel}>Cancel</button></div>
   </form>;
 }
@@ -96,6 +100,7 @@ export function Admin({
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [attendees, setAttendees] = useState([]);
+  const attendeesRequest = useRef(0);
   const [qrDisplay, setQrDisplay] = useState(null);
   const [qrLoadingId, setQrLoadingId] = useState('');
   const [qrError, setQrError] = useState('');
@@ -121,15 +126,19 @@ export function Admin({
     loadEvents();
   }, [loadEvents]);
   const loadAttendees = async event => {
+    const requestId = ++attendeesRequest.current;
     setSelected(event);
+    setAttendees([]);
     try {
       const {
         registrations
       } = await api(`/admin/events/${event.id}/registrations`, {
         token
       });
+      if (requestId !== attendeesRequest.current) return;
       setAttendees(registrations);
     } catch (reason) {
+      if (requestId !== attendeesRequest.current) return;
       setError(reason.message);
     }
   };
@@ -176,8 +185,8 @@ export function Admin({
     setConfirmationName('');
     setDeleteError('');
   };
-  if (editing !== undefined) return <main className="page-wrap"><EventForm token={token} event={editing} onSaved={() => {
-      setEditing(undefined);
+  if (editing !== undefined) return <main className="page-wrap"><EventForm token={token} event={editing} onSaved={savedEvent => {
+      setEditing(savedEvent?.id ? savedEvent : undefined);
       loadEvents();
     }} onCancel={() => setEditing(undefined)} /></main>;
   return <main className="page-wrap admin-page">
