@@ -3,6 +3,12 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, Github } from "lucide-react";
 import { api, signInWithOAuthProvider } from "../../../shared/services/api.js";
 import { normalizeUsername, isValidUsername } from '../utils/username.js';
+import { safeRedirectPath } from '../utils/redirect.js';
+import { oauthErrorMessage } from '../utils/oauthErrors.js';
+
+const OAUTH_PROVIDER_LABELS = { google: 'Google', github: 'GitHub' };
+const USERNAME_TITLE = '3–20 characters: letters, numbers and underscores only. Letters are saved in lowercase.';
+const AUTH_ERROR_ID = 'auth-form-error';
 
 function StudentIdField({
   id,
@@ -27,11 +33,20 @@ export function AuthPage({
     password: ''
   });
   const [error, setError] = useState('');
+  const [errorField, setErrorField] = useState('');
   const [busy, setBusy] = useState(false);
   const [oauthProviderBusy, setOauthProviderBusy] = useState('');
   const navigate = useNavigate();
   const authRequestInFlight = useRef(false);
-  const from = '/';
+  const from = safeRedirectPath(location.state?.from) ?? '/';
+  const showError = (message, field = '') => {
+    setError(message);
+    setErrorField(message ? field : '');
+  };
+  const fieldErrorProps = field => errorField === field ? {
+    'aria-invalid': true,
+    'aria-describedby': AUTH_ERROR_ID
+  } : {};
 
   const acceptAuthentication = result => {
     session.acceptSession(result);
@@ -50,7 +65,7 @@ export function AuthPage({
     authRequestInFlight.current = true;
     setBusy(true);
     setOauthProviderBusy(providerName);
-    setError('');
+    showError('');
     try {
       const oauthProfile = await signInWithOAuthProvider(providerName);
       const result = await api('/auth/oauth', {
@@ -59,7 +74,7 @@ export function AuthPage({
       });
       acceptAuthentication(result);
     } catch (reason) {
-      setError(reason?.message || `${providerName} sign-in could not be completed. Please try again.`);
+      showError(oauthErrorMessage(reason, OAUTH_PROVIDER_LABELS[providerName] || providerName) || '');
     } finally {
       authRequestInFlight.current = false;
       setBusy(false);
@@ -69,23 +84,23 @@ export function AuthPage({
 
   useEffect(() => {
     setMode(new URLSearchParams(location.search).get('mode') === 'register' ? 'register' : 'login');
-    setError('');
+    showError('');
   }, [location.search]);
 
   const submit = async event => {
     event.preventDefault();
     if (authRequestInFlight.current) return;
     setBusy(true);
-    setError('');
+    showError('');
     if (mode === 'register') {
       if (form.password !== form.confirmPassword) {
-        setError('Passwords do not match.');
+        showError('Passwords do not match.', 'confirmPassword');
         setBusy(false);
         return;
       }
       const username = normalizeUsername(form.username);
       if (!isValidUsername(username)) {
-        setError('Username must be 3–20 characters using letters, numbers, and underscores.');
+        showError('Username must be 3–20 characters using letters, numbers, and underscores.', 'username');
         setBusy(false);
         return;
       }
@@ -111,14 +126,14 @@ export function AuthPage({
       });
       acceptAuthentication(result);
     } catch (reason) {
-      setError(reason.message);
+      showError(reason.message, mode === 'register' && typeof reason?.field === 'string' ? reason.field : '');
     } finally {
       authRequestInFlight.current = false;
       setBusy(false);
     }
   };
 
-  if (session.user) return <Navigate to={session.user.username ? '/' : '/onboarding/username'} replace />;
+  if (session.user) return <Navigate to={session.user.username ? from : '/onboarding/username'} replace state={session.user.username ? undefined : { from }} />;
 
   return <main className="auth-layout">
       <div className="auth-art"><h1>Your next<br />breakthrough<br /><span>starts here</span></h1><div className="auth-symbol">{'{ }'}</div></div>
@@ -151,11 +166,11 @@ export function AuthPage({
           ...form,
           name: e.target.value
         })} /></label>}
-        <label>{mode === 'register' ? 'email' : 'Email address'}<input autoComplete="email" type="email" required value={form.email} onChange={e => setForm({
+        <label>{mode === 'register' ? 'Email' : 'Email address'}<input autoComplete="email" type="email" required {...fieldErrorProps('email')} value={form.email} onChange={e => setForm({
           ...form,
           email: e.target.value
         })} /></label>
-        {mode === 'register' && <label>Username<input autoComplete="username" required minLength="3" maxLength="20" pattern="[A-Za-z0-9_]{3,20}" value={form.username} onChange={e => setForm({
+        {mode === 'register' && <label>Username<input autoComplete="username" required minLength="3" maxLength="20" pattern="[A-Za-z0-9_]{3,20}" title={USERNAME_TITLE} {...fieldErrorProps('username')} value={form.username} onChange={e => setForm({
           ...form,
           username: e.target.value
         })} /></label>}
@@ -163,15 +178,15 @@ export function AuthPage({
           ...form,
           password: e.target.value
         })} /></label>
-        {mode === 'register' && <label>Confirm password<input autoComplete="new-password" type="password" minLength="8" required value={form.confirmPassword || ''} onChange={e => setForm({
+        {mode === 'register' && <label>Confirm password<input autoComplete="new-password" type="password" minLength="8" required {...fieldErrorProps('confirmPassword')} value={form.confirmPassword || ''} onChange={e => setForm({
           ...form,
           confirmPassword: e.target.value
         })} /></label>}
-        {error && <div className="notice error-notice">{error}</div>}
+        {error && <div className="notice error-notice" id={AUTH_ERROR_ID} role="alert">{error}</div>}
         <button className="button button-dark auth-submit" disabled={busy}>{busy ? 'One moment...' : mode === 'login' ? 'Log in' : 'Create account'} <ArrowRight size={17} /></button>
         <p className="auth-switch">{mode === 'login' ? 'New around here?' : 'Already have an account?'} <button type="button" onClick={() => {
           setMode(mode === 'login' ? 'register' : 'login');
-          setError('');
+          showError('');
         }}> {mode === 'login' ? 'Create an account' : 'Log in'}</button></p>
       </form>
     </main>;
@@ -181,11 +196,12 @@ export function UsernameSetupPage({
   session
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState(session.user?.username || '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const from = '/';
-  if (!session.user) return <Navigate to="/login" replace />;
+  const from = safeRedirectPath(location.state?.from) ?? '/';
+  if (!session.user) return <Navigate to="/login" replace state={{ from }} />;
   if (session.user.username) return <Navigate to={from} replace />;
   const submit = async event => {
     event.preventDefault();
@@ -238,12 +254,12 @@ export function RequireUsername({
   }
   if (!session.user) {
     return <Navigate to="/login" replace state={{
-      from: location.pathname + location.search
+      from: location.pathname + location.search + location.hash
     }} />;
   }
   if (!session.user.username && location.pathname !== '/onboarding/username') {
     return <Navigate to="/onboarding/username" replace state={{
-      from: location.pathname + location.search
+      from: location.pathname + location.search + location.hash
     }} />;
   }
   return children;

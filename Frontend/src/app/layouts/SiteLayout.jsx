@@ -2,6 +2,24 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, LogOut, Menu, Moon, Sun, X } from "lucide-react";
 import { NotificationBellMenu } from '../../features/notifications/components/NotificationBellMenu.jsx';
+// Closes an open popover on Escape or on a pointer press outside every element in `refs`.
+function useDismiss(open, refs, close) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = event => {
+      if (!refs.some(ref => ref.current?.contains(event.target))) close();
+    };
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') close(event);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+}
 export function Header({
   user,
   onSignOut,
@@ -12,26 +30,19 @@ export function Header({
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const accountMenuRef = useRef(null);
+  const mainNavRef = useRef(null);
+  const menuToggleRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
-  useEffect(() => {
-    if (!accountOpen) return undefined;
-    const closeOnOutsideClick = event => {
-      if (!accountMenuRef.current?.contains(event.target)) setAccountOpen(false);
-    };
-    const closeOnEscape = event => {
-      if (event.key === 'Escape') setAccountOpen(false);
-    };
-    document.addEventListener('pointerdown', closeOnOutsideClick);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsideClick);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [accountOpen]);
+  useDismiss(accountOpen, [accountMenuRef], () => setAccountOpen(false));
+  useDismiss(menuOpen, [mainNavRef, menuToggleRef], event => {
+    setMenuOpen(false);
+    if (event && mainNavRef.current?.contains(document.activeElement)) menuToggleRef.current?.focus();
+  });
   useEffect(() => {
     setAccountOpen(false);
-  }, [location.pathname]);
+    setMenuOpen(false);
+  }, [location.key]);
   const isCycleRoute = /^\/roadmaps\/[^/]+\/cycles(?:\/|$)/.test(location.pathname) || location.pathname.startsWith('/roadmaps/check-in/');
   const isActive = path => path === '/'
     ? location.pathname === '/'
@@ -98,7 +109,7 @@ export function Header({
               <span className="brand-name">ICPC PUA</span>
             </span>
           </Link>
-          <nav className={menuOpen ? 'main-nav open' : 'main-nav'} aria-label="Main navigation" onClick={event => {
+          <nav ref={mainNavRef} id="main-navigation" className={menuOpen ? 'main-nav open' : 'main-nav'} aria-label="Main navigation" onClick={event => {
             if (event.target.closest('a')) setMenuOpen(false);
           }}>
             {navLink('/', 'Home')}
@@ -149,14 +160,16 @@ export function Header({
             <Link className="nav-login" to="/login">Log in</Link>
             <Link className="nav-register" to="/login?mode=register">Register</Link>
           </div>}
-          <button className="icon-button menu-toggle" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
+          <button ref={menuToggleRef} className="icon-button menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-controls="main-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(open => !open)}>
             {menuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
     </header>
     </div>;
 }
-export function Footer() {
+export function Footer({
+  user
+}) {
   return <footer className="site-footer">
       <div className="footer-inner">
         <div className="footer-main">
@@ -171,7 +184,7 @@ export function Footer() {
             <Link to="/events">Events</Link>
             <Link to="/roadmaps">Roadmaps</Link>
             <Link to="/leaderboard">Leaderboard</Link>
-            <Link to="/login">Join the community</Link>
+            {!user && <Link to="/login">Join the community</Link>}
           </nav>
           <div className="footer-community">
             <b>Stay connected</b>
