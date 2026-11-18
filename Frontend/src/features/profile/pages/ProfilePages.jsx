@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { ArrowRight, Bell, Check, CheckCircle2, ChevronLeft, Code2, Copy, ExternalLink, Globe, KeyRound, Link2, LogOut, Moon, Palette, Plus, Shield, Sun, Trophy, UserRound } from "lucide-react";
+import { ArrowRight, Bell, Check, CheckCircle2, ChevronLeft, Code2, Copy, ExternalLink, Globe, KeyRound, Link2, LogOut, Moon, Palette, Plus, RefreshCw, Shield, Sun, Trophy, UserRound } from "lucide-react";
 import { api, eventDate } from "../../../shared/services/api.js";
 import { normalizeTeamPreference, normalizeTeamStatus, studentProfileForm } from '../utils/profileForm.js';
 import { normalizeUsername, isValidUsername } from '../../auth/utils/username.js';
@@ -75,6 +75,19 @@ export function SettingsPage({
   const [codeforcesLoading, setCodeforcesLoading] = useState(false);
   const [codeforcesCopied, setCodeforcesCopied] = useState(false);
   const [codeforcesChangingHandle, setCodeforcesChangingHandle] = useState(false);
+  const [codeforcesStats, setCodeforcesStats] = useState(null);
+  const [codeforcesShared, setCodeforcesShared] = useState(null);
+  const [codeforcesRefreshing, setCodeforcesRefreshing] = useState(false);
+  // Applies a save/refresh response: stored count, sync time and whether other members can see it.
+  const applyCodeforcesResult = result => {
+    setCodeforcesStats(result.codeforces || null);
+    setCodeforcesShared(result.shared || null);
+    if (result.user) {
+      session.updateUser(result.user);
+      setCodeforcesVerification(result.user.profile.codeforcesVerification);
+      if (result.user.profile.codeforcesVerification?.handle) setCodeforcesHandle(result.user.profile.codeforcesVerification.handle);
+    }
+  };
   const saveCodeforcesVerification = verification => {
     setCodeforcesVerification(verification);
     if (verification.handle) setCodeforcesHandle(verification.handle);
@@ -95,8 +108,11 @@ export function SettingsPage({
     setCodeforcesLoading(true);
     setCodeforcesError('');
     api('/auth/codeforces-verification', { token: session.token })
-      .then(({ verification }) => {
-        if (active) saveCodeforcesVerification(verification);
+      .then(({ verification, codeforces, shared }) => {
+        if (!active) return;
+        saveCodeforcesVerification(verification);
+        setCodeforcesStats(codeforces || null);
+        setCodeforcesShared(shared || null);
       })
       .catch(reason => {
         if (active) setCodeforcesError(reason.message);
@@ -163,14 +179,36 @@ export function SettingsPage({
         token: session.token,
         body: JSON.stringify({ handle: codeforcesHandle.trim() }),
       });
-      saveCodeforcesVerification(result.verification);
+      applyCodeforcesResult(result);
       setCodeforcesToken(result.token || '');
       setCodeforcesChangingHandle(false);
-      setCodeforcesMessage(result.message || 'Self-reported Codeforces handle saved (unverified).');
+      if (result.sync && !result.sync.ok) setCodeforcesError(result.sync.message);
+      else setCodeforcesMessage(result.message || 'Codeforces handle saved.');
     } catch (reason) {
       setCodeforcesError(reason.message);
     } finally {
       setCodeforcesBusy(false);
+    }
+  };
+  const refreshCodeforces = async () => {
+    setCodeforcesError('');
+    setCodeforcesMessage('');
+    setCodeforcesBusy(true);
+    setCodeforcesRefreshing(true);
+    try {
+      const result = await api('/auth/codeforces/sync', {
+        method: 'POST',
+        token: session.token,
+        body: JSON.stringify({ force: true }),
+      });
+      applyCodeforcesResult(result);
+      if (!result.sync.ok) setCodeforcesError(result.sync.message);
+      else setCodeforcesMessage(result.sync.message || `Synced with Codeforces: ${result.codeforces.solvedCount} solved = ${result.codeforces.points} points.`);
+    } catch (reason) {
+      setCodeforcesError(reason.message);
+    } finally {
+      setCodeforcesBusy(false);
+      setCodeforcesRefreshing(false);
     }
   };
   const checkCodeforcesToken = async () => {
@@ -471,7 +509,7 @@ export function SettingsPage({
       </header>
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
-          {[['account', 'Account', UserRound], ['profile', 'Profile', UserRound], ['privacy', 'Privacy', Shield], ['notifications', 'Notifications', Bell], ['appearance', 'Appearance', Palette], ['connections', 'Connections', Link2], ['codeforces', 'Codeforces', Code2], ['points', 'Points history', Trophy]].map(([path, label, Icon]) => <Link key={path} className={section === path ? 'settings-nav-link active' : 'settings-nav-link'} to={`/settings/${path}`} aria-current={section === path ? 'page' : undefined}><Icon size={17} />{label}</Link>)}
+          {[['account', 'Account', UserRound], ['profile', 'Profile', UserRound], ['privacy', 'Privacy', Shield], ['notifications', 'Notifications', Bell], ['appearance', 'Appearance', Palette], ['connections', 'Connections', Link2], ['codeforces', 'Codeforces', Code2], ['points', 'Attendance points', Trophy]].map(([path, label, Icon]) => <Link key={path} className={section === path ? 'settings-nav-link active' : 'settings-nav-link'} to={`/settings/${path}`} aria-current={section === path ? 'page' : undefined}><Icon size={17} />{label}</Link>)}
         </nav>
         <div className="settings-content">
       {section === 'points' && pointsVerificationRequired ? <section className="settings-card codeforces-required-card" aria-labelledby="points-verification-title">
@@ -481,8 +519,8 @@ export function SettingsPage({
         <Link className="button button-dark" to="/settings/codeforces">Go to Codeforces verification <ArrowRight size={16} /></Link>
       </section> : section === 'points' && <section className="settings-card points-history-card" aria-labelledby="points-history-title">
         <div className="points-history-heading">
-          <div><span className="eyebrow">YOUR ACTIVITY</span><h2 id="points-history-title">Points history</h2><p>Points recorded for your event and training-session attendance.</p></div>
-          <div className="points-history-total"><small>Points earned</small><strong>{pointsLoading ? '—' : pointsEntries.reduce((total, entry) => total + entry.points, 0).toLocaleString()}</strong></div>
+          <div><span className="eyebrow">YOUR ACTIVITY</span><h2 id="points-history-title">Attendance points</h2><p>Points recorded for your event and training-session attendance. For now these are not added to your leaderboard total: leaderboard points are 20 per problem solved on Codeforces.</p></div>
+          <div className="points-history-total"><small>Attendance points</small><strong>{pointsLoading ? '—' : pointsEntries.reduce((total, entry) => total + entry.points, 0).toLocaleString()}</strong></div>
         </div>
         {pointsError && <div className="notice error-notice" role="alert">{pointsError} <button className="text-link" type="button" onClick={() => setPointsReload(value => value + 1)}>Try again</button></div>}
         {pointsLoading ? <p className="points-history-message" role="status">Loading your points history...</p> : pointsError ? null : pointsEntries.length ? <div className="points-history-list">
@@ -491,28 +529,32 @@ export function SettingsPage({
             <div className="points-history-copy"><strong>{entry.title}</strong><small>{entry.category} · {new Date(entry.earnedAt).toLocaleString()}</small></div>
             <b>+{entry.points} pts</b>
           </article>)}
-        </div> : <p className="points-history-message">No points have been recorded yet. Points from checked-in events and attended training sessions will appear here.</p>}
+        </div> : <p className="points-history-message">No attendance points have been recorded yet. Points from checked-in events and attended training sessions will appear here.</p>}
       </section>}
       {section === 'codeforces' && <section className="settings-card codeforces-verification-card" aria-labelledby="codeforces-verification-title">
         <span className="eyebrow">COMPETITIVE PROGRAMMING</span>
         <h2 id="codeforces-verification-title">Codeforces handle</h2>
-        <p>Link your self-reported Codeforces handle to display on your student profile and dashboard (optional, unverified).</p>
+        <p>Add your Codeforces handle to appear on the leaderboard. You earn 20 points for every problem you have solved on Codeforces. Handles are self-reported: we check that the handle exists, not who owns it.</p>
         {codeforcesLoading ? <p className="points-history-message" role="status">Loading Codeforces handle...</p> : <>
           {codeforcesVerification.handle && !codeforcesChangingHandle && <div className="codeforces-verified-state" role="status" style={{ marginBottom: '1rem' }}>
             <Code2 size={21} aria-hidden="true" />
-            <div><strong>Unverified handle linked</strong><span><a href={`https://codeforces.com/profile/${encodeURIComponent(codeforcesVerification.handle)}`} target="_blank" rel="noopener noreferrer">@{codeforcesVerification.handle} <ExternalLink size={14} aria-hidden="true" /></a></span>
-              <small>Status: Self-reported (unverified)</small>
+            <div><strong>Handle linked</strong><span><a href={`https://codeforces.com/profile/${encodeURIComponent(codeforcesVerification.handle)}`} target="_blank" rel="noopener noreferrer">@{codeforcesVerification.handle} <ExternalLink size={14} aria-hidden="true" /></a></span>
+              <small>{codeforcesStats?.syncedAt ? `${codeforcesStats.solvedCount.toLocaleString()} solved · ${codeforcesStats.points.toLocaleString()} points` : 'No solved count yet'}</small>
+              <small>{codeforcesStats?.syncedAt ? `Last synced ${new Date(codeforcesStats.syncedAt).toLocaleString()}` : 'Not synced with Codeforces yet. Use Refresh to sync now.'}</small>
+              {codeforcesStats?.truncated && <small>This account has more submissions than we read, so the count may be low.</small>}
+              <button className="button button-outline" type="button" onClick={refreshCodeforces} disabled={codeforcesBusy}><RefreshCw size={16} aria-hidden="true" /> {codeforcesRefreshing ? 'Refreshing...' : 'Refresh'}</button>
             </div>
           </div>}
           <form onSubmit={generateCodeforcesToken}>
             <label htmlFor="codeforces-handle">Codeforces handle
               <input id="codeforces-handle" name="handle" autoComplete="off" maxLength="24" pattern="[A-Za-z0-9._-]{3,24}" required value={codeforcesHandle} onChange={event => setCodeforcesHandle(event.target.value)} />
             </label>
-            <button className="button button-dark" type="submit" disabled={codeforcesBusy}>{codeforcesBusy ? 'Saving handle...' : 'Save handle'} <ArrowRight size={16} /></button>
+            <button className="button button-dark" type="submit" disabled={codeforcesBusy}>{codeforcesBusy && !codeforcesRefreshing ? 'Checking Codeforces...' : 'Save handle'} <ArrowRight size={16} /></button>
           </form>
         </>}
         {codeforcesError && <div className="notice error-notice" role="alert">{codeforcesError}</div>}
         {codeforcesMessage && <div className="notice success-notice" role="status">{codeforcesMessage}</div>}
+        {codeforcesShared && !codeforcesShared.ok && codeforcesVerification.handle && <div className="notice error-notice" role="status">{codeforcesShared.message}</div>}
       </section>}
       {section === 'account' && <section className="settings-card settings-profile-card" aria-labelledby="settings-profile-title">
         <div className="settings-card-heading">
@@ -585,7 +627,7 @@ export function SettingsPage({
       {section === 'connections' && <form className="settings-card profile-editor" onSubmit={saveConnections}>
         <span className="eyebrow">MANUALLY ENTERED PROFILES</span>
         <h2>Public profile links</h2>
-        <p>These are manually entered public links and handles, not authenticated connections. Use Codeforces settings to verify Codeforces ownership; every field here is optional.</p>
+        <p>These are manually entered public links and handles, not authenticated connections. To appear on the leaderboard, save your handle in Codeforces settings instead; the handle typed here is only shown on your profile. Every field here is optional.</p>
         <fieldset>
           <legend>Competitive and social profiles</legend>
           {[['githubUrl', 'GitHub profile URL'], ['linkedinUrl', 'LinkedIn profile URL'], ['codeforcesUrl', 'Codeforces profile URL']].map(([field, label]) => {
@@ -874,7 +916,7 @@ export function UserProfilePage({
           </div>
           <div className="member-profile-summary-stats">
             <div><small>Leaderboard rank</small><strong>{profile.standing?.rank ? `#${profile.standing.rank}` : '—'}</strong></div>
-            <div><small>Total points</small><strong>{profile.standing?.points ?? '—'}</strong></div>
+            <div><small>Leaderboard points</small><strong>{profile.standing?.points ?? '—'}</strong></div>
             <div><small>Events attended</small><strong>{profile.standing?.eventsAttended ?? '—'}</strong></div>
           </div>
         </section>

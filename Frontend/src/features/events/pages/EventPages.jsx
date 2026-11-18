@@ -477,7 +477,7 @@ export function CheckInPage({
         })
       });
       setAttendance(result.attendance);
-      setSuccess(`${result.message} You earned ${result.attendance.pointsAwarded} points.`);
+      setSuccess(`${result.message} You earned ${result.attendance.pointsAwarded} attendance points.`);
     } catch (reason) {
       setError(reason.message);
     } finally {
@@ -498,7 +498,7 @@ export function CheckInPage({
           {error && <div className="notice error-notice" role="alert">{error}</div>}
           {success && <div className="notice success-notice" role="status">{success}</div>}
           {!user && <div className="notice checkin-login-notice">Sign in with your registered account to verify your eligibility and check in.</div>}
-          {user && attendance?.checkedInAt && <div className="attendance-confirmed" role="status"><Check size={20} /><span><b>You’re checked in!</b><small>Attendance recorded · {attendance.pointsAwarded} points earned</small></span></div>}
+          {user && attendance?.checkedInAt && <div className="attendance-confirmed" role="status"><Check size={20} /><span><b>You’re checked in!</b><small>Attendance recorded · {attendance.pointsAwarded} attendance points</small></span></div>}
           {user && attendance && !attendance.checkedInAt && <div className="checkin-window-note">
             {checkInWindow?.isOpen ? 'Your registration is confirmed. Check in now to record your attendance.' : `Check-in opens ${eventDate(checkInWindow.opensAt)} and closes ${eventDate(checkInWindow.closesAt)}.`}
           </div>}

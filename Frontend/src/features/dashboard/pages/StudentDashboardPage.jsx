@@ -4,9 +4,9 @@ import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, Clock3, Code2, Trophy
 import { api, eventDate } from '../../../shared/services/api.js';
 
 export function StudentDashboardPage({ session }) {
-  const cfHandle = session.user?.profile?.codeforcesVerification?.handle
-    || session.user?.profile?.externalProfiles?.codeforcesHandle
-    || '';
+  // The leaderboard uses the handle saved in Codeforces settings.
+  const cfHandle = session.user?.profile?.codeforcesVerification?.handle || '';
+  const [syncNote, setSyncNote] = useState('');
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -30,6 +30,30 @@ export function StudentDashboardPage({ session }) {
     loadDashboard();
   }, [loadDashboard]);
 
+  // Refresh the Codeforces solved count when the stored one is old. The adapter
+  // decides whether a call is needed; a failure keeps the last stored count.
+  useEffect(() => {
+    if (!cfHandle || session.user?.role !== 'user') return undefined;
+    let active = true;
+    setSyncNote('');
+    api('/auth/codeforces/sync', { method: 'POST', token: session.token, body: JSON.stringify({ force: false }) })
+      .then(result => {
+        if (!active) return;
+        if (result.changed) {
+          session.updateUser(result.user);
+          return api('/dashboard', { token: session.token }).then(({ dashboard: fresh }) => {
+            if (active) setDashboard(fresh);
+          });
+        }
+        if (!result.sync.ok && result.sync.message) setSyncNote(result.sync.message);
+        return undefined;
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [cfHandle, session.token, session.user?.role]);
+
   if (session.user?.role === 'admin') return <Navigate to="/admin/overview" replace />;
 
   return <main className="page-wrap student-dashboard-page">
@@ -37,13 +61,14 @@ export function StudentDashboardPage({ session }) {
       <div><h1>Student dashboard</h1></div>
       <Link className="student-dashboard-status" to="/settings/codeforces">
         <Code2 size={16} aria-hidden="true" />
-        {cfHandle ? `Unverified handle: @${cfHandle}` : 'Link Codeforces handle (optional)'}
+        {cfHandle ? `Codeforces: @${cfHandle}` : 'Add your Codeforces handle to join the leaderboard'}
       </Link>
     </header>
 
     {loading ? <div className="empty-state"><span className="loader" /> Loading your dashboard...</div> : error ? <div className="notice error-notice" role="alert">{error} <button className="text-link" type="button" onClick={() => setRetry(value => value + 1)}>Try again</button></div> : dashboard && <>
+      {syncNote && <div className="notice error-notice" role="status">{syncNote}</div>}
       <section className="student-dashboard-stats" aria-label="Your community statistics">
-        <article><span><Trophy size={18} aria-hidden="true" /></span><small>Total points</small><strong>{dashboard.stats.points.toLocaleString()}</strong><Link to="/settings/points">Points history <ArrowRight size={14} /></Link></article>
+        <article><span><Trophy size={18} aria-hidden="true" /></span><small>Leaderboard points</small><strong>{dashboard.stats.points.toLocaleString()}</strong><Link to="/settings/codeforces">{dashboard.codeforces ? `${dashboard.stats.problemsSolved.toLocaleString()} solved × ${dashboard.scoring.pointsPerProblem}` : 'Add handle'} <ArrowRight size={14} /></Link></article>
         <article><span><CalendarDays size={18} aria-hidden="true" /></span><small>Events attended</small><strong>{dashboard.stats.eventsAttended.toLocaleString()}</strong><Link to="/events">Explore events <ArrowRight size={14} /></Link></article>
         <article><span><BookOpen size={18} aria-hidden="true" /></span><small>Training cycles</small><strong>{dashboard.stats.trainingCycles.toLocaleString()}</strong><Link to="/training">Open training <ArrowRight size={14} /></Link></article>
       </section>
@@ -62,10 +87,11 @@ export function StudentDashboardPage({ session }) {
         </section>
 
         <section className="student-dashboard-panel" aria-labelledby="student-dashboard-attendance-title">
-          <div className="student-dashboard-panel-heading"><div><span className="eyebrow">COMMUNITY</span><h2 id="student-dashboard-attendance-title">Recent attendance</h2></div><Link to="/settings/points">Points history <ArrowRight size={15} /></Link></div>
+          <div className="student-dashboard-panel-heading"><div><span className="eyebrow">COMMUNITY</span><h2 id="student-dashboard-attendance-title">Recent attendance</h2></div><Link to="/settings/points">Attendance points <ArrowRight size={15} /></Link></div>
           {dashboard.recentAttendance.length ? <div className="student-dashboard-attendance-list">{dashboard.recentAttendance.map((item, index) => <article key={`${item.event.id}-${item.checkedInAt}-${index}`}>
             <span className="student-dashboard-attendance-icon"><CheckCircle2 size={17} aria-hidden="true" /></span><div><strong>{item.event.title}</strong><small>{eventDate(item.checkedInAt, { month: 'short', day: 'numeric', year: 'numeric' })}</small></div><b>+{item.pointsAwarded} pts</b>
           </article>)}</div> : <p className="student-dashboard-empty">Your checked-in community events will appear here.</p>}
+          <p className="student-dashboard-empty">Attendance points are recorded here but are not added to your leaderboard total for now.</p>
           <Link className="button button-outline" to="/events">Discover events <ArrowRight size={16} /></Link>
         </section>
       </div>

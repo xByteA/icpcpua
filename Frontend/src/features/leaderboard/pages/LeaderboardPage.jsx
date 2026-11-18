@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Crown, Medal, Trophy } from "lucide-react";
 import { api } from "../../../shared/services/api.js";
-export function LeaderboardPage() {
+export function LeaderboardPage({ session }) {
+  const token = session?.token || null;
+  const isStudent = session?.user?.role === 'user';
+  const cfHandle = session?.user?.profile?.codeforcesVerification?.handle || '';
+  const [syncNote, setSyncNote] = useState('');
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -18,13 +22,40 @@ export function LeaderboardPage() {
       active = false;
     };
   }, [attempt]);
+  // A signed-in student's own Codeforces count is refreshed here when it is old;
+  // if it changed, the table is loaded again. A failure keeps the last stored count.
+  useEffect(() => {
+    if (!token || !isStudent || !cfHandle) return undefined;
+    let active = true;
+    setSyncNote('');
+    api('/auth/codeforces/sync', { method: 'POST', token, body: JSON.stringify({ force: false }) })
+      .then(result => {
+        if (!active) return;
+        if (result.changed) {
+          session.updateUser(result.user);
+          setAttempt(count => count + 1);
+        } else if (!result.sync.ok && result.sync.message) setSyncNote(result.sync.message);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [token, isStudent, cfHandle]);
+  const joinPrompt = !session?.user
+    ? <Link className="button button-dark" to="/login">Sign in to join</Link>
+    : isStudent && !cfHandle
+      ? <Link className="button button-dark" to="/settings/codeforces">Add your Codeforces handle</Link>
+      : null;
   return <main className="page-wrap leaderboard-page">
     <header className="leaderboard-title-card">
       <span className="leaderboard-title-icon"><Trophy size={22} aria-hidden="true" /></span>
       <div>
         <h1>Leaderboard</h1>
+        <p>20 points for every problem solved on Codeforces.</p>
       </div>
     </header>
+    {syncNote && <div className="notice error-notice" role="status">{syncNote}</div>}
+    {!loading && leaderboard.length > 0 && isStudent && !cfHandle && <div className="notice success-notice" role="status">You are not on the leaderboard yet. <Link to="/settings/codeforces">Add your Codeforces handle</Link> to appear.</div>}
     {loading ? <div className="empty-state"><span className="loader" /> Loading the leaderboard...</div> : leaderboard.length ? <>
       <section className={`leaderboard-podium leaderboard-podium-count-${Math.min(leaderboard.length, 3)}`} aria-labelledby="leaderboard-podium-title">
         <div className="podium-heading">
@@ -70,6 +101,6 @@ export function LeaderboardPage() {
           </div>;
         })}
       </section>
-    </> : error ? <div className="notice error-notice" role="alert">{error} <button className="text-link" type="button" onClick={() => setAttempt(count => count + 1)}>Try again</button></div> : <div className="empty-state"><span className="empty-icon"><Trophy size={24} /></span><h3>The first points are up for grabs.</h3><p>Check in at an event to get on the leaderboard.</p></div>}
+    </> : error ? <div className="notice error-notice" role="alert">{error} <button className="text-link" type="button" onClick={() => setAttempt(count => count + 1)}>Try again</button></div> : <div className="empty-state"><span className="empty-icon"><Trophy size={24} /></span><h3>No one is on the leaderboard yet.</h3><p>Add your Codeforces handle to appear here. You earn 20 points for every problem you have solved on Codeforces.</p>{joinPrompt}</div>}
   </main>;
 }

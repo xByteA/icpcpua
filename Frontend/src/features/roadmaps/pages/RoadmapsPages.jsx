@@ -650,7 +650,7 @@ export function RoadmapCheckInPage({
         ...current,
         attendance: result.attendance
       }));
-      setSuccess(`Check-in successful. You earned ${result.attendance.pointsAwarded} roadmap points.`);
+      setSuccess(`Check-in successful. You earned ${result.attendance.pointsAwarded} attendance points.`);
     } catch (reason) {
       setError(reason.message);
     } finally {
@@ -663,7 +663,7 @@ export function RoadmapCheckInPage({
     {error && <div className="notice error-notice" role="alert">{error}</div>}
     {data && <section className="roadmap-checkin-card"><span className="eyebrow">SESSION ATTENDANCE</span><h1>{data.session.title}</h1><p>{formatSessionTime(data.session)}</p>
       {success && <div className="notice success-notice" role="status">{success}</div>}
-      {data.attendance ? <div className="notice success-notice"><Check size={17} /> Already checked in · {data.attendance.pointsAwarded} points</div> : <button className="button button-dark" type="button" disabled={busy || !data.checkInWindow.isOpen} onClick={checkIn}>{busy ? 'Checking in...' : data.checkInWindow.isOpen ? 'Confirm attendance' : 'Check-in is not open'} <Check size={16} /></button>}
+      {data.attendance ? <div className="notice success-notice"><Check size={17} /> Already checked in · {data.attendance.pointsAwarded} attendance points</div> : <button className="button button-dark" type="button" disabled={busy || !data.checkInWindow.isOpen} onClick={checkIn}>{busy ? 'Checking in...' : data.checkInWindow.isOpen ? 'Confirm attendance' : 'Check-in is not open'} <Check size={16} /></button>}
       <button className="button button-outline" type="button" onClick={() => navigate('/training')}>Return to Training</button>
     </section>}
   </main>;

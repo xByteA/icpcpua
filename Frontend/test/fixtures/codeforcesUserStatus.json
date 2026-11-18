@@ -1,0 +1,413 @@
+{
+ "comment": "Hand-built in the shape returned by https://codeforces.com/api/user.status (newest first). Distinct solved problems under the documented rule: 7.",
+ "expectedSolvedCount": 7,
+ "status": "OK",
+ "result": [
+  {
+   "id": 14,
+   "creationTimeSeconds": 1794000014,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 2279,
+    "index": "E",
+    "name": "Save Me!",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 2279
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 2279,
+   "verdict": "OK"
+  },
+  {
+   "id": 13,
+   "creationTimeSeconds": 1794000013,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 2279,
+    "index": "E",
+    "name": "Save Me!",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 2279
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 2279,
+   "verdict": "WRONG_ANSWER"
+  },
+  {
+   "id": 12,
+   "creationTimeSeconds": 1794000012,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 2279,
+    "index": "E",
+    "name": "Save Me!",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 2279
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 2279,
+   "verdict": "OK"
+  },
+  {
+   "id": 11,
+   "creationTimeSeconds": 1794000011,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 2279,
+    "index": "D",
+    "name": "Meta Graph",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 2279
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 2279,
+   "verdict": "WRONG_ANSWER"
+  },
+  {
+   "id": 10,
+   "creationTimeSeconds": 1794000010,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1901,
+    "index": "A",
+    "name": "Twin Problem",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1901
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1901,
+   "verdict": "OK"
+  },
+  {
+   "id": 9,
+   "creationTimeSeconds": 1794000009,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1900,
+    "index": "C",
+    "name": "Twin Problem",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1900
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1900,
+   "verdict": "OK"
+  },
+  {
+   "id": 8,
+   "creationTimeSeconds": 1794000008,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 2118,
+    "index": "B",
+    "name": "Make It Permutation",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 2118
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 2118,
+   "verdict": "OK"
+  },
+  {
+   "id": 7,
+   "creationTimeSeconds": 1794000007,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1810,
+    "index": "C",
+    "name": "Make It Permutation",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1810
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1810,
+   "verdict": "OK"
+  },
+  {
+   "id": 6,
+   "creationTimeSeconds": 1794000006,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 104000,
+    "index": "A",
+    "name": "Warmup",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 104000
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 104000,
+   "verdict": "OK"
+  },
+  {
+   "id": 5,
+   "creationTimeSeconds": 1794000005,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "problemsetName": "acmsguru",
+    "index": "100",
+    "name": "A+B",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "verdict": "OK"
+  },
+  {
+   "id": 4,
+   "creationTimeSeconds": 1794000004,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1500,
+    "index": "A",
+    "name": "Partial One",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1500
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1500,
+   "verdict": "PARTIAL"
+  },
+  {
+   "id": 3,
+   "creationTimeSeconds": 1794000003,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1501,
+    "index": "B",
+    "name": "Still Testing",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1501
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1501
+  },
+  {
+   "id": 2,
+   "creationTimeSeconds": 1794000002,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1600,
+    "index": "F",
+    "name": "Team Task",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     },
+     {
+      "handle": "teammate_one"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1600
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1600,
+   "verdict": "OK"
+  },
+  {
+   "id": 1,
+   "creationTimeSeconds": 1794000001,
+   "relativeTimeSeconds": 2147483647,
+   "problem": {
+    "contestId": 1600,
+    "index": "F",
+    "name": "Team Task",
+    "type": "PROGRAMMING",
+    "tags": []
+   },
+   "author": {
+    "members": [
+     {
+      "handle": "Fixture_User"
+     }
+    ],
+    "participantType": "PRACTICE",
+    "ghost": false,
+    "contestId": 1600
+   },
+   "programmingLanguage": "C++23 (GCC 14-64, msys2)",
+   "testset": "TESTS",
+   "passedTestCount": 10,
+   "timeConsumedMillis": 46,
+   "memoryConsumedBytes": 102400,
+   "contestId": 1600,
+   "verdict": "TIME_LIMIT_EXCEEDED"
+  }
+ ]
+}

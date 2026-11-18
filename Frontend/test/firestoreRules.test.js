@@ -30,4 +30,21 @@ test('Firestore Security Rules Structural & Security Invariants Verification', a
     assert.match(rules, /function\s+isAdmin\(\)/);
     assert.match(rules, /match\s+\/\{document=\*\*\}\s*\{\s*allow\s+read,\s*write:\s*if\s*false;/);
   });
+
+  await t.test('5. Bounds the client-reported Codeforces solved count and locks handles per account', () => {
+    assert.match(rules, /function\s+codeforcesStatsValid\(data\)/);
+    assert.match(rules, /stats\.get\('solvedCount',\s*0\)\s+is\s+int/);
+    assert.match(rules, /stats\.get\('solvedCount',\s*0\)\s*>=\s*0/);
+    assert.match(rules, /stats\.get\('solvedCount',\s*0\)\s*<=\s*50000/);
+    assert.match(rules, /match\s+\/codeforcesHandles\/\{handle\}/);
+    assert.match(rules, /getAfter\(\/databases\/\$\(database\)\/documents\/codeforcesHandles\/\$\(handle\.lower\(\)\)\)\.data\.uid\s*==\s*uid/);
+    // Both the create and the update rule for users/{uid} apply the two checks.
+    assert.equal(rules.match(/&&\s*codeforcesStatsValid\(request\.resource\.data\)/g)?.length, 2);
+    assert.equal(rules.match(/&&\s*codeforcesHandleClaimed\(uid,\s*request\.resource\.data,/g)?.length, 2);
+  });
+
+  await t.test('6. The stored-count bound matches the client constant', async () => {
+    const { MAX_CODEFORCES_SOLVED_COUNT } = await import('../src/shared/utils/codeforcesScore.js');
+    assert.ok(rules.includes(`<= ${MAX_CODEFORCES_SOLVED_COUNT}`));
+  });
 });
