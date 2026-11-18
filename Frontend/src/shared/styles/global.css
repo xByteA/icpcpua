@@ -4653,3 +4653,267 @@ html[data-theme='dark'] .student-dashboard-attendance-list article > b { backgro
     max-height: calc(100vh - 84px);
   }
 }
+
+/* ==========================================================================
+   Phone fixes (fix/mobile-css). Appended last so that equal-specificity rules
+   here win over the many earlier, overlapping per-page rules. Every rule is
+   scoped to phone widths (max-width: 680px, the design system's mobile
+   breakpoint) or to dark theme, so 1024px+ layouts are untouched.
+   ========================================================================== */
+
+/* 5. Dark-theme notices: the light tints above gave ~2:1 contrast against the
+   dark-theme text tokens. Rebuild the tint from the same tokens on the dark
+   surface (error 5.7:1, success 6.8:1; fallback hex values are the computed mix). */
+html[data-theme='dark'] .error-notice {
+  border-color: #8a5650;
+  border-color: color-mix(in srgb, var(--color-error) 42%, var(--color-surface));
+  background: #41312d;
+  background: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
+}
+html[data-theme='dark'] .success-notice {
+  border-color: #50704f;
+  border-color: color-mix(in srgb, var(--color-success) 42%, var(--color-surface));
+  background: #323a31;
+  background: color-mix(in srgb, var(--color-success) 14%, var(--color-surface));
+}
+
+/* 2. Tab bars that used to scroll sideways with no hint: wrap onto extra rows
+   at the widths where they scrolled (all items stay visible, nothing to discover). */
+@media (max-width: 900px) {
+  .admin-dashboard-nav { flex-wrap: wrap; overflow-x: visible; }
+  .roadmap-studio-tabs { flex-wrap: wrap; overflow-x: visible; }
+}
+@media (max-width: 1023px) {
+  .settings-nav,
+  .settings-modern-page .settings-nav { flex-wrap: wrap; overflow-x: visible; }
+}
+
+@media (max-width: 680px) {
+  /* 1. Header: brand and controls never overlap from 320px. The brand block may
+     shrink and its label wraps to two lines (ICPC / PUA) instead of overflowing. */
+  .site-header { gap: 8px; }
+  .header-left-group { flex: 1 1 auto; min-width: 0; }
+  .brand, .brand-copy { min-width: 0; }
+  .brand-name { white-space: normal; line-height: 1.1; }
+
+  /* 4. Header controls are 36-40px tall: extend the hit area to 44px without
+     changing how they look. */
+  .theme-toggle, .menu-toggle, .nav-login, .nav-register, .brand { position: relative; }
+  .theme-toggle::after, .menu-toggle::after { content: ''; position: absolute; inset: -3px; }
+  .nav-login::after, .nav-register::after, .brand::after { content: ''; position: absolute; inset: -4px 0; }
+}
+@media (max-width: 360px) {
+  .brand { gap: 7px; }
+  .brand-name { font-size: 13px; }
+}
+
+/* 4. Touch targets (44px, per DESIGN-SYSTEM.md) */
+@media (max-width: 680px) {
+  /* Carousel dots: keep the 12px dot, make the button 44x44 and draw the dot with ::before. */
+  .home-carousel-pagination { gap: 0; padding-top: 0; flex-wrap: wrap; }
+  .home-carousel-dot { position: relative; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; }
+  .home-carousel-dot.active { width: 44px; background: transparent; }
+  .home-carousel-dot::before { content: ''; position: absolute; top: 50%; left: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 1px solid var(--color-primary); border-radius: 99px; background: transparent; transition: width .18s ease, margin .18s ease, background-color .18s ease; }
+  .home-carousel-dot.active::before { width: 28px; margin-left: -14px; background: var(--color-primary); }
+  .home-carousel-dot:focus-visible { outline-offset: -3px; }
+
+  /* Inline text links: extend the hit area only (no layout change). */
+  .back-link, .student-roadmap-back, .text-link, .roadmap-detail-back,
+  .personal-leaderboard-heading > a, .learning-calendar-cycles-link { position: relative; }
+  .back-link::after, .student-roadmap-back::after, .text-link::after, .roadmap-detail-back::after,
+  .personal-leaderboard-heading > a::after, .learning-calendar-cycles-link::after { content: ''; position: absolute; inset: -13px -6px; }
+  .main-nav > a.text-link::after { display: none; }
+  .student-roadmap-back { min-height: 44px !important; }
+
+  /* Footer links: full-height rows. */
+  .footer-links { gap: 0; }
+  .footer-links > a { min-height: 44px !important; display: flex; align-items: center; }
+  .footer-brand, .footer-community > a { min-height: 44px !important; }
+
+  /* Controls that can simply be taller. */
+  .button, .small-button, .notification-filter, .notification-mark-all,
+  .notification-dropdown-heading button, .settings-nav-link, .learning-calendar-session,
+  .learning-node-lock-actions button, .roadmap-attendance-row button,
+  .roadmap-cycle-view-switcher button, .member-profile-button, .roadmap-page-hero-action,
+  .roadmap-cycle-unavailable, .roadmap-live-cycle, .student-dashboard-status,
+  .leaderboard-member-link, .learning-calendar-cycles-link { min-height: 44px !important; }
+  .notification-mark-all, .notification-dropdown-heading button { padding-inline: 8px; }
+  select, input:not([type='checkbox']):not([type='radio']):not([type='range']) { min-height: 44px !important; }
+  .learning-calendar-toolbar button, .learning-calendar-collapse-button { width: 44px !important; height: 44px !important; }
+  .learning-calendar-day { height: 44px !important; }
+  .learning-graph-controls button { width: 44px !important; height: 44px !important; }
+  .learning-node-resource-card { grid-template-columns: 22px minmax(0, 1fr) 44px; }
+  .learning-node-resource-card > a { width: 44px !important; height: 44px !important; }
+  .learning-node-problem-solve, .learning-node-problem-locked { min-height: 44px !important; }
+  .roadmap-weekdays label { min-height: 44px !important; padding-inline: 4px; }
+  .roadmap-weekdays input { width: 20px; height: 20px; }
+  .roadmap-calendar-event { min-height: 44px !important; }
+}
+
+/* 3. Type floor: nothing a phone user has to read is below the design system's 12px minimum.
+   Selectors were collected from every rule that resolved below 12px at phone widths.
+   Not touched: .notification-count (font-size: 0, the bell shows a dot only) and the
+   learning-graph node text, whose on-screen size is set by the graph's JS zoom. */
+@media (max-width: 680px) {
+  .brand small,
+  .availability,
+  .detail-meta small,
+  .spots-note,
+  .auth-divider { font-size: 12px; }
+  .admin-panel h2 span,
+  .attendee-list h3 span,
+  .admin-event-row > div > span,
+  .attendee-row > div > span,
+  .status-pill { font-size: 12px; }
+  .small-button,
+  .check-status,
+  .ticket-detail-grid small,
+  .points-note,
+  .attendance-summary { font-size: 12px; }
+  .leaderboard-avatar,
+  .podium-heading-count,
+  .podium-medal,
+  .podium-member-name,
+  .podium-points small { font-size: 12px; }
+  .podium-stats,
+  .qr-display-window,
+  .learning-path-heading p,
+  .learning-sidebar-message,
+  .learning-calendar-session-list > p { font-size: 12px; }
+  .learning-roadmap-sidebar .learning-progress-error,
+  .learning-calendar-description,
+  .learning-calendar-weekdays > span,
+  .learning-calendar-day,
+  .learning-calendar-session-list > h4 { font-size: 12px; }
+  .learning-calendar-session strong,
+  .learning-calendar-session small,
+  .learning-calendar-cycles-link,
+  .learning-problem-difficulty,
+  .roadmap-node-dependencies-heading small { font-size: 12px; }
+  .roadmap-node-dependency-option > span,
+  .roadmap-node-dependency-option small,
+  .roadmap-node-dependency-empty,
+  .learning-path-admin-node p,
+  .learning-graph-hint { font-size: 12px; }
+  .roadmap-calendar-day-number,
+  .roadmap-calendar-event span,
+  .roadmap-calendar-event small,
+  .brand-copy small,
+  .footer-community > b { font-size: 12px; }
+  .home-eyebrow,
+  .home-event-banner-category,
+  .home-event-status,
+  .home-path-index,
+  .home-roadmap-node span { font-size: 12px; }
+  .home-goal-timeline li > span,
+  .acpc-countdown-unit span,
+  .settings-profile-details dt,
+  .notification-filter,
+  .notification-filter span { font-size: 12px; }
+  .notification-category-label,
+  .notifications-page-copy time,
+  .notifications-page-actions .button,
+  .student-roadmap-category,
+  .learning-path-node-status { font-size: 12px; }
+  .learning-node-category,
+  .learning-node-subtopics span,
+  .learning-node-lock-actions button,
+  .learning-node-lock-actions > span,
+  .learning-node-problem-copy small { font-size: 12px; }
+  .learning-node-recording-note,
+  .learning-node-resource-card > div span,
+  .learning-resource-unavailable,
+  .learning-node-problem-header,
+  .learning-node-problem-row .learning-problem-difficulty { font-size: 12px; }
+  .roadmap-session-time small,
+  .roadmap-admin-form label small,
+  .roadmap-admin-session-form label small,
+  .roadmap-weekdays legend,
+  .roadmap-admin-session summary span { font-size: 12px; }
+  .roadmap-attendance-row,
+  .roadmap-attendance-row button,
+  .roadmap-preview-list,
+  .roadmap-studio-status,
+  .roadmap-studio-tabs a span { font-size: 12px; }
+  .admin-dashboard-heading .eyebrow,
+  .roadmap-difficulty-badge,
+  .roadmap-duration-badge,
+  .roadmap-page-hero-label,
+  .member-profile-eyebrow { font-size: 12px; }
+  .member-profile-tag,
+  .member-profile-attendance p,
+  .member-profile-summary-stats small,
+  .settings-modern-page .settings-card label,
+  .settings-modern-page .student-id-form label { font-size: 12px; }
+  .settings-modern-page .settings-role-badge,
+  .settings-modern-page .settings-profile-details dt,
+  .settings-modern-page .profile-editor .profile-field-hint,
+  .settings-modern-page .profile-field-requirement,
+  .leaderboard-head { font-size: 12px; }
+  .leaderboard-row,
+  .leaderboard-row strong,
+  .codeforces-verified-state small,
+  .points-history-total small,
+  .points-history-copy small { font-size: 12px; }
+  .student-dashboard-status,
+  .student-dashboard-stats small,
+  .student-dashboard-stats article > a,
+  .student-dashboard-panel-heading > a,
+  .student-dashboard-cycle-copy small { font-size: 12px; }
+  .student-dashboard-attendance-list small,
+  .student-dashboard-cycle-copy > span,
+  .student-dashboard-attendance-list article > b { font-size: 12px; }
+  .learning-node-problem-solve,
+  .learning-node-problem-locked { font-size: 12px !important; }
+}
+
+/* Phone refinements that go with the rules above. */
+@media (max-width: 680px) {
+  .footer-links > a { width: 100%; }
+  .auth-switch button { min-height: 44px !important; }
+  .notification-filter { min-width: 44px; }
+
+  /* Cycle calendar: seven ~40px columns cannot hold "Session 9" at 12px. The
+     session buttons carry a full aria-label, so show only the time (wrapping
+     "4:30 PM" onto two lines is still legible) and let the button use the cell's
+     padding so it is as wide as the column allows. */
+  .roadmap-calendar-event { margin-inline: -3px; padding: 4px 2px; align-items: center; text-align: center; }
+  .roadmap-calendar-event > span { display: none; }
+  .roadmap-calendar-event small { line-height: 1.15; text-align: center; }
+
+  /* Leaderboard / podium: names wrap instead of truncating to "Abd...", and the
+     podium stats stack so "230 solved / 14 events" stays inside a ~82px card at 320px. */
+  .leaderboard-member-name, .podium-member-name { white-space: normal; overflow-wrap: break-word; text-overflow: clip; line-height: 1.2; }
+  .podium-stats { flex-direction: column; gap: 0; white-space: normal; text-align: center; line-height: 1.3; }
+  .podium-stats > span[aria-hidden='true'] { display: none; }
+
+  /* More text links that were 19-26px tall. */
+  .student-dashboard-stats article > a, .student-dashboard-panel-heading > a { min-height: 44px !important; }
+  .student-dashboard-cycle-list article > a { position: relative; }
+  .student-dashboard-cycle-list article > a::after { content: ''; position: absolute; inset: -13px; }
+  .roadmap-card-content h2 > a, .roadmap-studio-row-copy h2 > a, .roadmap-studio-breadcrumbs a { position: relative; }
+  .roadmap-card-content h2 > a::after, .roadmap-studio-row-copy h2 > a::after, .roadmap-studio-breadcrumbs a::after { content: ''; position: absolute; inset: -11px -4px; }
+}
+@media (max-width: 680px) {
+  /* Open mobile menu rows. */
+  .main-nav > .nav-link { min-height: 44px !important; }
+  /* Default <small> inside admin labels resolved to 11.7px. */
+  .admin-form label small, .form-grid label small { font-size: 12px; }
+
+  /* Notification dropdown: it was right-aligned to the bell and 292-347px wide, so
+     at 320-375px its left edge sat 45-80px off-screen. Anchor it to the header row
+     (16px gutters) instead of the bell. */
+  .notification-menu { position: static; }
+  .notification-dropdown { top: calc(100% + 8px); right: 0; left: 0; width: auto; max-height: calc(100vh - 96px); }
+
+  /* Node dialog problem table: 12px headings need wider columns; keep the check and
+     open controls at 44px. */
+  .learning-node-problem-header, .learning-node-problem-row { grid-template-columns: 44px minmax(0, 1fr) 74px 62px; gap: 2px; padding-right: 4px; padding-left: 4px; }
+  .learning-node-problem-header { letter-spacing: 0; }
+  .learning-problem-check { width: 44px !important; height: 44px !important; }
+  .learning-node-problem-row > .learning-node-problem-open { width: 44px !important; height: 44px !important; }
+  .learning-node-dialog-close { width: 44px !important; height: 44px !important; }
+}
+@media (max-width: 360px) {
+  .leaderboard-avatar { display: none; }
+}
