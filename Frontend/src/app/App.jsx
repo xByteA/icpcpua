@@ -60,7 +60,7 @@ export default function App() {
       <Header user={session.user} onSignOut={session.signOut} token={session.token} theme={theme} onThemeChange={setTheme} />
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/events" element={<EventsPage />} />
+        <Route path="/events" element={<EventsPage token={session.token} user={session.user} />} />
         <Route path="/dashboard" element={<RequireUsername session={session}>{session.user?.role === 'user' ? <StudentDashboardPage session={session} /> : <Navigate to="/admin/overview" replace />}</RequireUsername>} />
         <Route path="/events/:eventId" element={<EventDetail token={session.token} user={session.user} />} />
         <Route path="/roadmaps" element={<RoadmapsPage token={session.token} />} />

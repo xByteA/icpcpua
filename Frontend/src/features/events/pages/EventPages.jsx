@@ -256,18 +256,11 @@ export function HomePage() {
     </section>
   </main>;
 }
-function hasStoredToken() {
-  try {
-    return Boolean(localStorage.getItem('pua-token'));
-  } catch {
-    return false;
-  }
-}
 export function EventsPage({
   user,
   token
 }) {
-  const signedIn = Boolean(user || token || hasStoredToken());
+  const signedIn = Boolean(user || token);
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState('upcoming');
   const [query, setQuery] = useState('');

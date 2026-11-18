@@ -34,7 +34,7 @@ function RoadmapCard({
         <span className="roadmap-live-dot" aria-hidden="true" />
         <span>Open Cycle: {openCycle.title}</span>
         <ArrowRight size={5} aria-hidden="true" />
-      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability unavailable</div>}
+      </Link> : cycleAvailability === 'available' ? <div className="roadmap-no-open-cycle"><BookOpen size={16} aria-hidden="true" /> {hasCycles ? 'No cycle currently open' : 'No scheduled cycles'}</div> : cycleAvailability === 'login' ? <Link className="roadmap-cycle-unavailable" to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }}>Sign in to view cycle availability</Link> : <div className="roadmap-cycle-unavailable">Cycle availability couldn’t be loaded</div>}
       <Link className="button button-dark roadmap-card-link" to={`/roadmaps/${roadmap.slug}`}>Explore roadmap <ArrowRight size={16} aria-hidden="true" /></Link>
     </div>
   </article>;
