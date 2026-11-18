@@ -1,6 +1,7 @@
 import QRCode from 'qrcode';
 import seedFixture from '../data/seedFixture.json' with { type: 'json' };
 import { ADMIN_EMAILS, getFirebaseClients } from './firebase.js';
+import { validateRoadmapForPublish } from '../../features/roadmaps/utils/roadmapPublishValidation.js';
 import {
   collection,
   deleteDoc,
@@ -10,6 +11,18 @@ import {
 } from 'firebase/firestore';
 
 const STORAGE_KEY = 'icpc_pua_spark_db_v1';
+
+const ROADMAP_EDITABLE_FIELDS = [
+  'title',
+  'description',
+  'coverImageUrl',
+  'difficulty',
+  'estimatedDuration',
+  'objectives',
+  'audience',
+  'prerequisites',
+  'status',
+];
 
 function createError(message, status = 400, extra = {}) {
   const error = new Error(message);
@@ -245,6 +258,12 @@ function presentUser(user, { includePrivate = true } = {}) {
     out.studentId = user.studentId || null;
   }
   return out;
+}
+
+function assertCycleRoadmapPublished(state, cycle) {
+  if (cycle.status !== 'published') return;
+  const roadmap = state.roadmaps.find((r) => String(r.id || r._id) === String(cycle.roadmap));
+  if (roadmap?.status !== 'published') throw createError('Publish the roadmap before publishing its cycle.', 409);
 }
 
 function getCurrentUser(state, token) {
@@ -1447,7 +1466,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
         objectives: Array.isArray(body.objectives) ? body.objectives : [],
         audience: String(body.audience || '').trim(),
         prerequisites: String(body.prerequisites || '').trim(),
-        status: body.status || 'draft',
+        status: 'draft',
         createdBy: adminUser.id,
         createdAt: now,
         updatedAt: now,
@@ -1501,9 +1520,21 @@ export async function handleSparkRequest(rawPath, options = {}) {
       }
       if (method === 'DELETE' && nodeId) {
         const idx = state.roadmapNodes.findIndex((n) => String(n.id || n._id) === nodeId);
-        if (idx >= 0) state.roadmapNodes.splice(idx, 1);
+        const [removed] = idx >= 0 ? state.roadmapNodes.splice(idx, 1) : [];
+        const siblingRoadmapId = String(removed?.roadmap ?? roadmapId);
+        const now = new Date().toISOString();
+        const dependents = state.roadmapNodes.filter(
+          (n) => String(n.roadmap) === siblingRoadmapId && Array.isArray(n.dependencies) && n.dependencies.some((dep) => String(dep) === nodeId),
+        );
+        for (const dependent of dependents) {
+          dependent.dependencies = dependent.dependencies.filter((dep) => String(dep) !== nodeId);
+          dependent.updatedAt = now;
+        }
         saveState(state);
         await deleteDocFromFirestore('roadmapNodes', nodeId);
+        for (const dependent of dependents) {
+          await syncDocToFirestore('roadmapNodes', dependent.id || dependent._id, dependent);
+        }
         return null;
       }
     }
@@ -1521,6 +1552,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
+      assertCycleRoadmapPublished(state, cycle);
       state.roadmapCycles.push(cycle);
       saveState(state);
       await syncDocToFirestore('roadmapCycles', id, cycle);
@@ -1532,7 +1564,24 @@ export async function handleSparkRequest(rawPath, options = {}) {
       const roadmapId = decodeURIComponent(adminRoadmapUpdateMatch[1]);
       const roadmap = state.roadmaps.find((r) => String(r.id || r._id) === roadmapId);
       if (!roadmap) throw createError('Roadmap not found.', 404);
-      Object.assign(roadmap, body, { updatedAt: new Date().toISOString() });
+      const now = new Date().toISOString();
+      const changes = { updatedAt: now };
+      for (const field of ROADMAP_EDITABLE_FIELDS) {
+        if (Object.hasOwn(body, field)) changes[field] = body[field];
+      }
+      const next = { ...roadmap, ...changes };
+      if (next.status === 'published') {
+        const nodes = state.roadmapNodes
+          .filter((n) => String(n.roadmap) === roadmapId)
+          .map((n) => ({ ...n, _id: String(n.id || n._id) }));
+        try {
+          validateRoadmapForPublish(next, nodes);
+        } catch (reason) {
+          throw createError(reason.message, 400);
+        }
+        if (roadmap.status !== 'published' && !roadmap.publishedAt) changes.publishedAt = now;
+      }
+      Object.assign(roadmap, changes);
       saveState(state);
       await syncDocToFirestore('roadmaps', roadmap.id, roadmap);
       return { roadmap };
@@ -1546,6 +1595,7 @@ export async function handleSparkRequest(rawPath, options = {}) {
       if (!cycle) throw createError('Cycle not found.', 404);
 
       if (!sub && method === 'PUT') {
+        assertCycleRoadmapPublished(state, { ...cycle, ...body });
         Object.assign(cycle, body, { updatedAt: new Date().toISOString() });
         saveState(state);
         await syncDocToFirestore('roadmapCycles', cycle.id, cycle);

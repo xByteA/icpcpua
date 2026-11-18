@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/firestoreRules.test.js test/sparkAdapter.test.js"
+    "test": "node --test test/firestoreRules.test.js test/sparkAdapter.test.js test/roadmapPublish.test.js"
   },
   "dependencies": {
     "firebase": "^13.1.0",
