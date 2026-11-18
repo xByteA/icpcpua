@@ -327,3 +327,18 @@
     flex-wrap: wrap;
   }
 }
+
+/* Phone type floor: DESIGN-SYSTEM.md sets 12px as the minimum text size. */
+@media (max-width: 680px) {
+  .roadmaps-admin-page .roadmap-import-kicker,
+  .roadmaps-admin-page .roadmap-import-tree-node p,
+  .roadmaps-admin-page .roadmap-import-tree-node-meta,
+  .roadmaps-admin-page .roadmap-import-topic-details summary span {
+    font-size: 12px;
+  }
+
+  .roadmaps-admin-page .roadmap-import-topic-details summary {
+    min-height: 44px;
+    align-items: center;
+  }
+}
