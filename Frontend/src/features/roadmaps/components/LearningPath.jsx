@@ -15,7 +15,8 @@ export function LearningPath({
   nodes = [],
   token,
   user,
-  roadmapSlug
+  roadmapSlug,
+  preview = false
 }) {
   const viewportRef = useRef(null);
   const dialogCloseRef = useRef(null);
@@ -36,7 +37,7 @@ export function LearningPath({
     zoom: 1
   });
   const [solvedKeys, setSolvedKeys] = useState(() => new Set());
-  const [progressStatus, setProgressStatus] = useState(user?.role === 'user' && token ? 'loading' : 'unavailable');
+  const [progressStatus, setProgressStatus] = useState(preview ? 'preview' : user?.role === 'user' && token ? 'loading' : 'unavailable');
   const [progressError, setProgressError] = useState('');
   const [pendingKeys, setPendingKeys] = useState(() => new Set());
   const [progressRetry, setProgressRetry] = useState(0);
@@ -158,7 +159,7 @@ export function LearningPath({
       const progress = problemCounts.byTopic.get(id) || { total: 0, solved: 0 };
       const completed = progressStatus === 'ready' && progress.total > 0 && progress.solved === progress.total;
       const dependencyIds = (node.dependencies || []).map(String);
-      const unmetDependencies = dependencyIds.filter(dependencyId => {
+      const unmetDependencies = preview ? [] : dependencyIds.filter(dependencyId => {
         const dependency = graph.nodeById.get(dependencyId);
         if (!dependency || progressStatus !== 'ready') return true;
         const dependencyProgress = problemCounts.byTopic.get(dependencyId) || { total: 0, solved: 0 };
@@ -171,7 +172,7 @@ export function LearningPath({
       });
     }
     return states;
-  }, [graph.nodeById, nodes, problemCounts.byTopic, progressStatus]);
+  }, [graph.nodeById, nodes, preview, problemCounts.byTopic, progressStatus]);
   const fitView = useCallback(() => {
     if (!viewport.width || !viewport.height || !graph.width || !graph.height) return;
     const padding = 24;
@@ -218,8 +219,8 @@ export function LearningPath({
     let active = true;
     setSolvedKeys(new Set());
     setProgressError('');
-    if (!token || user?.role !== 'user') {
-      setProgressStatus('unavailable');
+    if (preview || !token || user?.role !== 'user') {
+      setProgressStatus(preview ? 'preview' : 'unavailable');
       return () => {
         active = false;
       };
@@ -246,7 +247,7 @@ export function LearningPath({
     return () => {
       active = false;
     };
-  }, [roadmapSlug, token, user?.role, progressRetry]);
+  }, [preview, roadmapSlug, token, user?.role, progressRetry]);
   useEffect(() => {
     let active = true;
     setRoadmapSessions([]);
@@ -655,7 +656,7 @@ export function LearningPath({
           {progressStatus === 'error' && <p className="learning-progress-error" role="alert">{progressError} <button type="button" onClick={() => setProgressRetry(current => current + 1)}>Retry</button></p>}
         </section>
 
-        <section className="learning-calendar-card" aria-labelledby="learning-calendar-title">
+        {!preview && <section className="learning-calendar-card" aria-labelledby="learning-calendar-title">
           <header className="learning-sidebar-card-heading">
             <h3 id="learning-calendar-title">Roadmap calendar</h3>
             <button type="button" className="learning-calendar-collapse-button" aria-label={calendarCollapsed ? 'Expand roadmap calendar' : 'Collapse roadmap calendar'} onClick={() => setCalendarCollapsed(current => !current)}>
@@ -706,7 +707,7 @@ export function LearningPath({
               {!roadmapSessions.length && <Link className="learning-calendar-cycles-link" to="/training">Explore Training <ArrowRight size={14} /></Link>}
             </>}
           </>}
-        </section>
+        </section>}
       </aside>
 
       {selectedNode && <div className="learning-node-dialog-backdrop" onMouseDown={event => {

@@ -24,8 +24,13 @@ test('Spark Adapter Contract Tests — Full 31-Route Coverage', async t => {
     const { roadmap } = await handleSparkRequest(`/roadmaps/${ROADMAP_SLUG}`);
     assert.equal(roadmap.nodes.length, 8);
 
-    const { events } = await handleSparkRequest('/events');
+    // sort=latest skips the upcoming/past date filter, so this does not depend on today's date.
+    const { events } = await handleSparkRequest('/events?sort=latest');
     assert.ok(events.length >= 2, 'Expected at least 2 published events from seedFixture.json');
+    assert.ok(events.every(event => event.status === 'published'), 'Expected only published events');
+    const titles = events.map(event => event.title);
+    assert.ok(titles.includes('ICPC-Orientation'), 'Expected seeded event "ICPC-Orientation"');
+    assert.ok(titles.includes('Level 1 Training Kickoff & Problem Solving Drill'), 'Expected seeded event "Level 1 Training Kickoff & Problem Solving Drill"');
   });
 
   let studentToken = '';
