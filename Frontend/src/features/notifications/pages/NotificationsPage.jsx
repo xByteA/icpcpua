@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Bell } from "lucide-react";
 import { api } from "../../../shared/services/api.js";
@@ -12,38 +12,61 @@ export function NotificationsPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const loadNotifications = useCallback(async () => {
-    setLoading(true);
+  const mountedRef = useRef(true);
+  const requestRef = useRef(0);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const loadNotifications = useCallback(async ({
+    silent = false
+  } = {}) => {
+    const requestId = ++requestRef.current;
+    if (!silent) setLoading(true);
     try {
       const query = filter === 'unread' ? '?filter=unread' : '';
       const result = await api(`/notifications${query}`, {
         token
       });
+      if (!mountedRef.current || requestId !== requestRef.current) return;
       setNotifications(result.notifications);
       setUnreadCount(result.unreadCount);
       setError('');
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current && requestId === requestRef.current) setError(reason.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current && requestId === requestRef.current) setLoading(false);
     }
   }, [filter, token]);
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
   const markRead = async notificationId => {
-    setBusy(true);
+    const target = notifications.find(item => item._id === notificationId);
+    if (!target || target.readAt) return;
+    const previousReadAt = target.readAt;
+    const readAt = new Date().toISOString();
     setError('');
+    setNotifications(current => current.map(item => item._id === notificationId ? {
+      ...item,
+      readAt
+    } : item));
+    setUnreadCount(count => Math.max(0, count - 1));
     try {
       await api(`/notifications/${encodeURIComponent(notificationId)}/read`, {
         method: 'PATCH',
         token
       });
-      await loadNotifications();
     } catch (reason) {
+      if (!mountedRef.current) return;
+      setNotifications(current => current.map(item => item._id === notificationId ? {
+        ...item,
+        readAt: previousReadAt
+      } : item));
+      setUnreadCount(count => count + 1);
       setError(reason.message);
-    } finally {
-      setBusy(false);
     }
   };
   const markAllRead = async () => {
@@ -54,11 +77,13 @@ export function NotificationsPage({
         method: 'POST',
         token
       });
-      await loadNotifications();
+      await loadNotifications({
+        silent: true
+      });
     } catch (reason) {
-      setError(reason.message);
+      if (mountedRef.current) setError(reason.message);
     } finally {
-      setBusy(false);
+      if (mountedRef.current) setBusy(false);
     }
   };
   const openNotification = async notification => {

@@ -256,33 +256,51 @@ export function HomePage() {
     </section>
   </main>;
 }
-export function EventsPage() {
+function hasStoredToken() {
+  try {
+    return Boolean(localStorage.getItem('pua-token'));
+  } catch {
+    return false;
+  }
+}
+export function EventsPage({
+  user,
+  token
+}) {
+  const signedIn = Boolean(user || token || hasStoredToken());
   const [events, setEvents] = useState([]);
   const [status, setStatus] = useState('upcoming');
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [category, setCategory] = useState('');
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
     if (status === 'past') params.set('status', 'past');
-    if (query.trim()) params.set('q', query.trim());
+    if (debouncedQuery.trim()) params.set('q', debouncedQuery.trim());
     if (category) params.set('category', category);
     api(`/events?${params}`).then(({
       events: result
     }) => {
       if (!active) return;
       setEvents(result);
+      setLoaded(true);
       setCategories(current => [...new Set([...current, ...result.map(event => event.category)])].sort());
     }).catch(reason => active && setError(reason.message)).finally(() => active && setLoading(false));
     return () => {
       active = false;
     };
-  }, [status, query, category]);
+  }, [status, debouncedQuery, category]);
   return <main className="events-page">
       <section className="events-section" id="events">
         <div className="section-heading">
@@ -300,9 +318,11 @@ export function EventsPage() {
           </select>
         </div>
         {error && <div className="notice error-notice">{error}</div>}
-        {loading ? <div className="empty-state"><span className="loader" /> Loading events...</div> : events.length ? <div className="event-grid">{events.map((event, index) => <EventCard key={event.id} event={event} index={index} />)}</div> : <div className="empty-state"><span className="empty-icon"><CalendarDays size={24} /></span><h3>No events found</h3><p>Try a different search or check back soon for new events</p></div>}
+        {loading && !loaded ? <div className="empty-state"><span className="loader" /> Loading events...</div> : events.length ? <div className="event-grid" aria-busy={loading}>{events.map((event, index) => <EventCard key={event.id} event={event} index={index} />)}</div> : <div className="empty-state"><span className="empty-icon"><CalendarDays size={24} /></span><h3>No events found</h3><p>Try a different search or check back soon for new events</p></div>}
       </section>
-      <section className="community-strip"><div className="strip-icon"><Users size={21} /></div><div><b>Better together</b><span>New to competitive programming? This is your place to start</span></div><Link to="/login">Meet the community <ArrowRight size={16} /></Link></section>
+      <section className="community-strip"><div className="strip-icon"><Users size={21} /></div><div><b>Better together</b><span>New to competitive programming? This is your place to start</span></div>{!signedIn && <>
+      <Link to="/login">Meet the community <ArrowRight size={16} /></Link>
+      </>}</section>
     </main>;
 }
 export function EventDetail({
@@ -317,6 +337,7 @@ export function EventDetail({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('error');
   const navigate = useNavigate();
   const load = useCallback(async () => {
     const [{
@@ -330,7 +351,10 @@ export function EventDetail({
     setRegistered(mine.events.some(item => item.event.id === current.id));
   }, [eventId, token]);
   useEffect(() => {
-    load().catch(error => setMessage(error.message)).finally(() => setLoading(false));
+    load().catch(error => {
+      setMessageType('error');
+      setMessage(error.message);
+    }).finally(() => setLoading(false));
   }, [load]);
   const register = async () => {
     if (!token) return navigate('/login', {
@@ -347,8 +371,10 @@ export function EventDetail({
       });
       setRegistered(true);
       await load();
+      setMessageType('success');
       setMessage('You’re registered! You can review your registration here.');
     } catch (error) {
+      setMessageType('error');
       setMessage(error.message);
     } finally {
       setBusy(false);
@@ -364,18 +390,20 @@ export function EventDetail({
       });
       setRegistered(false);
       await load();
+      setMessageType('success');
       setMessage('Your registration has been cancelled.');
     } catch (error) {
+      setMessageType('error');
       setMessage(error.message);
     } finally {
       setBusy(false);
     }
   };
   if (loading) return <div className="page-wrap"><div className="empty-state"><span className="loader" /> Loading event...</div></div>;
-  if (!event) return <div className="page-wrap"><div className="notice error-notice">{message || 'Event not found.'}</div><Link className="text-link" to="/">Back to events</Link></div>;
+  if (!event) return <div className="page-wrap"><div className="notice error-notice">{message || 'Event not found.'}</div><Link className="text-link" to="/events">Back to events</Link></div>;
   const closed = event.status !== 'published' || new Date(event.startsAt) <= new Date() || event.registrationDeadline && new Date(event.registrationDeadline) <= new Date() || event.capacity && event.registrationCount >= event.capacity;
   return <main className="page-wrap">
-      <Link className="back-link" to="/"><ChevronLeft size={16} /> All events</Link>
+      <Link className="back-link" to="/events"><ChevronLeft size={16} /> All events</Link>
       <article className="detail-card">
         <div className={`detail-banner accent-${event.category.length % 4}`}>
           {event.coverImageUrl && <img className="detail-banner-cover" src={event.coverImageUrl} alt="" onError={e => e.currentTarget.remove()} />}
@@ -396,7 +424,7 @@ export function EventDetail({
           <p className="detail-description">{event.description}</p>
           {event.capacity && <p className="spots-note">{event.registrationCount} of {event.capacity} spots taken</p>}
           <p className="points-note"><Trophy size={16} /> {event.attendancePoints ?? 0} attendance points</p>
-          {message && <div className={`notice ${message.includes('registered') || message.includes('cancelled') ? 'success-notice' : 'error-notice'}`}>{message}</div>}
+          {message && <div role={messageType === 'success' ? 'status' : 'alert'} className={`notice ${messageType === 'success' ? 'success-notice' : 'error-notice'}`}>{message}</div>}
           <div className="detail-actions">
             {registered ? <><span className="registered-badge"><Check size={17} /> You’re registered</span><button className="button button-outline" disabled={busy || closed} onClick={cancel}>Cancel registration</button></> : <button className="button button-dark" disabled={busy || closed} onClick={register}>{busy ? 'Please wait...' : closed ? 'Registration closed' : 'Register for this event'} <ArrowRight size={17} /></button>}
           </div>
